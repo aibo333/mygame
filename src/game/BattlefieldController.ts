@@ -1,7 +1,17 @@
 import Phaser from 'phaser';
-import { DEFAULT_ARENA_HEIGHT, DEFAULT_ARENA_WIDTH } from '../core/combat/presets';
 import type { CombatEvent, CombatSnapshot } from '../core/types/combat';
-import { BattleScene } from './BattleScene';
+import {
+  BattleScene,
+  DEFAULT_ARENA_HEIGHT,
+  DEFAULT_ARENA_WIDTH,
+} from './BattleScene';
+
+export interface PointerWorldState {
+  x: number;
+  y: number;
+  leftDown: boolean;
+  rightDown: boolean;
+}
 
 export class BattlefieldController {
   private game: Phaser.Game | null = null;
@@ -38,6 +48,18 @@ export class BattlefieldController {
   public syncState(snapshot: CombatSnapshot, events: CombatEvent[]): void {
     if (this.destroyed) return;
     this.scene.syncState(snapshot, events);
+  }
+
+  public getPointerState(): PointerWorldState {
+    if (this.destroyed) {
+      return {
+        x: DEFAULT_ARENA_WIDTH / 2,
+        y: DEFAULT_ARENA_HEIGHT / 2,
+        leftDown: false,
+        rightDown: false,
+      };
+    }
+    return this.scene.getPointerState();
   }
 
   public destroy(): void {

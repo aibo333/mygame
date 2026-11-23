@@ -33,8 +33,9 @@ export function BattlefieldCanvas({
   return (
     <div
       ref={containerRef}
-      className="pixel-canvas-host relative aspect-video w-full overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950 shadow-[0_0_30px_rgba(2,6,23,0.85)]"
-      aria-label="守村戰場即時畫面"
+      onContextMenu={(e) => e.preventDefault()}
+      className="pixel-canvas-host relative aspect-[9/5] w-full cursor-crosshair select-none overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950 shadow-[0_0_32px_rgba(2,6,23,0.9)]"
+      aria-label="戰意守城即時戰場畫面"
     />
   );
 }

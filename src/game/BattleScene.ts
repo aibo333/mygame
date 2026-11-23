@@ -1,103 +1,100 @@
 import Phaser from 'phaser';
-import {
-  DEFAULT_ARENA_HEIGHT,
-  DEFAULT_ARENA_WIDTH,
-  DEFAULT_GATE_X,
-  STANCE_MODIFIERS,
-} from '../core/combat/presets';
 import type {
   CombatEvent,
   CombatSnapshot,
-  EnemyArchetype,
   EnemyState,
+  EnemyUnitType,
   HeroState,
-  SquadRole,
-  TacticalStance,
+  RegimentOrder,
+  RegimentType,
+  SoldierState,
 } from '../core/types/combat';
+import type { PointerWorldState } from './BattlefieldController';
 import {
+  HERO_TEXTURE_KEY,
   generateBattleTextures,
   getEnemyTextureKey,
-  getHeroTextureKey,
+  getSoldierTextureKey,
 } from './pixelSprites';
 
-const STANCE_VISUALS: Record<
-  TacticalStance,
-  { color: number; hex: string; banner: string }
-> = {
-  defense: {
-    color: 0x38bdf8,
-    hex: '#38bdf8',
-    banner: '🛡️ 結陣死守',
-  },
-  assault: {
-    color: 0xf97316,
-    hex: '#f97316',
-    banner: '⚔️ 全力強攻',
-  },
-  scatter: {
-    color: 0x34d399,
-    hex: '#34d399',
-    banner: '⚡ 散開追擊',
-  },
+export const DEFAULT_ARENA_WIDTH = 1080;
+export const DEFAULT_ARENA_HEIGHT = 600;
+export const DEFAULT_GATE_X = 80;
+
+const ENEMY_BURST_COLOR: Record<EnemyUnitType, number> = {
+  goblin_raider: 0x4ade80,
+  shield_orc: 0xef4444,
+  skeleton_archer: 0xc084fc,
+  berserker: 0xf97316,
+  enemy_commander: 0xfacc15,
 };
 
-const ROLE_BADGE: Record<SquadRole, { tag: string; color: string; hex: number }> = {
-  tank: { tag: '盾', color: '#7dd3fc', hex: 0x38bdf8 },
-  dps: { tag: '弓', color: '#6ee7b7', hex: 0x34d399 },
-  support: { tag: '癒', color: '#ddd6fe', hex: 0xa78bfa },
-};
-
-const ENEMY_TINT_BURST: Record<EnemyArchetype, number> = {
-  goblin: 0x4ade80,
-  archer: 0xc084fc,
-  bomber: 0xf97316,
-  brute: 0xfacc15,
+const ORDER_PING_COLOR: Record<RegimentOrder, number> = {
+  follow: 0x34d399,
+  hold: 0x38bdf8,
+  engage: 0xf59e0b,
 };
 
 interface HeroVisual {
-  id: string;
-  role: SquadRole;
   container: Phaser.GameObjects.Container;
   shadow: Phaser.GameObjects.Ellipse;
-  auraRing: Phaser.GameObjects.Arc;
+  warcryRing: Phaser.GameObjects.Arc;
   sprite: Phaser.GameObjects.Image;
-  drRing: Phaser.GameObjects.Arc;
   barGraphics: Phaser.GameObjects.Graphics;
-  label: Phaser.GameObjects.Text;
-  targetX: number;
-  targetY: number;
   currentX: number;
   currentY: number;
-  bobPhase: number;
-  hitFlashUntil: number;
+  targetX: number;
+  targetY: number;
+  facingAngle: number;
   alive: boolean;
+  hitFlashUntil: number;
+  nextGhostAt: number;
+  bobPhase: number;
+}
+
+interface SoldierVisual {
+  id: string;
+  regimentType: RegimentType;
+  container: Phaser.GameObjects.Container;
+  shadow: Phaser.GameObjects.Ellipse;
+  shieldGraphics: Phaser.GameObjects.Graphics;
+  sprite: Phaser.GameObjects.Image;
+  barGraphics: Phaser.GameObjects.Graphics;
+  currentX: number;
+  currentY: number;
+  targetX: number;
+  targetY: number;
+  facingAngle: number;
+  shieldBlocking: boolean;
+  charging: boolean;
+  alive: boolean;
+  hitFlashUntil: number;
+  nextChargeTrailAt: number;
+  bobPhase: number;
 }
 
 interface EnemyVisual {
   id: string;
-  archetype: EnemyArchetype;
-  isElite: boolean;
+  type: EnemyUnitType;
+  isCommander: boolean;
   container: Phaser.GameObjects.Container;
   shadow: Phaser.GameObjects.Ellipse;
-  dangerRing: Phaser.GameObjects.Arc | null;
   sprite: Phaser.GameObjects.Image;
   barGraphics: Phaser.GameObjects.Graphics;
-  tauntMark: Phaser.GameObjects.Text;
-  eliteTag: Phaser.GameObjects.Text | null;
-  targetX: number;
-  targetY: number;
+  bossTag: Phaser.GameObjects.Text | null;
   currentX: number;
   currentY: number;
-  bobPhase: number;
-  hitFlashUntil: number;
+  targetX: number;
+  targetY: number;
+  facingAngle: number;
   alive: boolean;
+  hitFlashUntil: number;
+  bobPhase: number;
 }
 
 interface TorchFlicker {
   glow: Phaser.GameObjects.Arc;
   flame: Phaser.GameObjects.Rectangle;
-  baseX: number;
-  baseY: number;
   phase: number;
 }
 
@@ -112,32 +109,50 @@ export class BattleScene extends Phaser.Scene {
   private arenaHeight = DEFAULT_ARENA_HEIGHT;
   private gateX = DEFAULT_GATE_X;
 
-  private heroVisuals = new Map<string, HeroVisual>();
+  private pointerState: PointerWorldState = {
+    x: DEFAULT_ARENA_WIDTH / 2,
+    y: DEFAULT_ARENA_HEIGHT / 2,
+    leftDown: false,
+    rightDown: false,
+  };
+  private pointerInsideCanvas = false;
+
+  // Entity visuals
+  private heroVisual: HeroVisual | null = null;
+  private soldierVisuals = new Map<string, SoldierVisual>();
   private enemyVisuals = new Map<string, EnemyVisual>();
 
-  // Static & animated environment objects
+  // Environment & overlays
+  private torches: TorchFlicker[] = [];
   private gateDamageFlash!: Phaser.GameObjects.Rectangle;
   private gateHpGraphics!: Phaser.GameObjects.Graphics;
   private gateHpText!: Phaser.GameObjects.Text;
-  private torches: TorchFlicker[] = [];
-  private spawnPortals: Phaser.GameObjects.Image[] = [];
+  private heroRespawnText!: Phaser.GameObjects.Text;
 
-  // Tank intercept radius overlay
-  private interceptGraphics!: Phaser.GameObjects.Graphics;
-  private currentInterceptRadius = 118;
-  private targetInterceptRadius = 118;
+  private formationOverlayGraphics!: Phaser.GameObjects.Graphics;
+  private bannerContainer!: Phaser.GameObjects.Container;
+  private bannerClothGraphics!: Phaser.GameObjects.Graphics;
 
-  // Screen-edge tactical tint pulse & stance banner
+  private telegraphGraphics!: Phaser.GameObjects.Graphics;
+  private heroGroundGraphics!: Phaser.GameObjects.Graphics;
   private edgePulseGraphics!: Phaser.GameObjects.Graphics;
   private edgePulseAlpha = 0;
-  private edgePulseColor = 0x38bdf8;
-  private stanceBannerContainer!: Phaser.GameObjects.Container;
-  private stanceBannerBg!: Phaser.GameObjects.Graphics;
-  private stanceBannerText!: Phaser.GameObjects.Text;
-  private stanceBannerTween: Phaser.Tweens.Tween | null = null;
+  private edgePulseColor = 0xfacc15;
+  private crosshairGraphics!: Phaser.GameObjects.Graphics;
+
+  private blurHandler: (() => void) | null = null;
 
   constructor() {
     super({ key: 'BattleScene' });
+  }
+
+  public getPointerState(): PointerWorldState {
+    return {
+      x: this.pointerState.x,
+      y: this.pointerState.y,
+      leftDown: this.pointerState.leftDown,
+      rightDown: this.pointerState.rightDown,
+    };
   }
 
   public create(): void {
@@ -145,10 +160,22 @@ export class BattleScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor('#0b1120');
 
+    // Disable browser context menu on right-click
+    this.input.mouse?.disableContextMenu();
+    this.setupPointerListeners();
+
+    if (this.pendingSnapshot) {
+      this.arenaWidth = this.pendingSnapshot.arenaWidth || DEFAULT_ARENA_WIDTH;
+      this.arenaHeight = this.pendingSnapshot.arenaHeight || DEFAULT_ARENA_HEIGHT;
+      this.gateX = this.pendingSnapshot.gateX || DEFAULT_GATE_X;
+    }
+
     this.buildBattleground();
-    this.buildVillageGate();
-    this.buildSpawnPortals();
+    this.buildCastleWall();
     this.buildOverlays();
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleShutdown, this);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.handleShutdown, this);
 
     this.isReady = true;
 
@@ -166,8 +193,8 @@ export class BattleScene extends Phaser.Scene {
       this.pendingSnapshot = snapshot;
       if (events.length > 0) {
         this.pendingEvents.push(...events);
-        if (this.pendingEvents.length > 80) {
-          this.pendingEvents = this.pendingEvents.slice(-80);
+        if (this.pendingEvents.length > 100) {
+          this.pendingEvents = this.pendingEvents.slice(-100);
         }
       }
       return;
@@ -175,12 +202,58 @@ export class BattleScene extends Phaser.Scene {
     this.applyState(snapshot, events);
   }
 
+  private setupPointerListeners(): void {
+    const updateFromPointer = (pointer: Phaser.Input.Pointer): void => {
+      this.pointerInsideCanvas = true;
+      this.pointerState.x = Phaser.Math.Clamp(pointer.worldX, 0, this.arenaWidth);
+      this.pointerState.y = Phaser.Math.Clamp(pointer.worldY, 0, this.arenaHeight);
+      this.pointerState.leftDown = pointer.leftButtonDown();
+      this.pointerState.rightDown = pointer.rightButtonDown();
+    };
+
+    this.input.on('pointermove', updateFromPointer);
+    this.input.on('pointerdown', updateFromPointer);
+    this.input.on('pointerup', updateFromPointer);
+    this.input.on('pointerupoutside', () => {
+      this.pointerState.leftDown = false;
+      this.pointerState.rightDown = false;
+    });
+    this.input.on('gameout', () => {
+      this.pointerInsideCanvas = false;
+      this.pointerState.leftDown = false;
+      this.pointerState.rightDown = false;
+    });
+    this.input.on('gameover', () => {
+      this.pointerInsideCanvas = true;
+    });
+
+    this.blurHandler = () => {
+      this.pointerState.leftDown = false;
+      this.pointerState.rightDown = false;
+    };
+    window.addEventListener('blur', this.blurHandler);
+  }
+
+  private handleShutdown(): void {
+    this.isReady = false;
+    if (this.blurHandler) {
+      window.removeEventListener('blur', this.blurHandler);
+      this.blurHandler = null;
+    }
+    this.clearAllUnits();
+    this.torches = [];
+    this.pendingSnapshot = null;
+    this.pendingEvents = [];
+    this.latestSnapshot = null;
+  }
+
   private applyState(snapshot: CombatSnapshot, events: CombatEvent[]): void {
     const isReset =
       this.lastTick !== -1 &&
       (snapshot.tick < this.lastTick ||
         (this.latestSnapshot !== null &&
-          snapshot.wave.id !== this.latestSnapshot.wave.id));
+          (snapshot.waveNumber !== this.latestSnapshot.waveNumber ||
+            snapshot.regiment.type !== this.latestSnapshot.regiment.type)));
 
     if (isReset) {
       this.clearAllUnits();
@@ -190,25 +263,26 @@ export class BattleScene extends Phaser.Scene {
     this.latestSnapshot = snapshot;
     this.gateX = snapshot.gateX || DEFAULT_GATE_X;
 
-    this.syncHeroes(snapshot);
-    this.syncEnemies(snapshot);
+    this.syncHero(snapshot.hero);
+    this.syncRegiment(snapshot);
+    this.syncEnemies(snapshot.enemies);
     this.updateGateHpBar(snapshot.gateHp, snapshot.gateMaxHp);
 
     for (const evt of events) {
       this.handleCombatEvent(evt);
     }
 
-    this.pruneDeadEnemies(snapshot);
+    this.pruneDeadUnits(snapshot);
   }
 
   public update(time: number, delta: number): void {
     if (!this.isReady) return;
 
     const dtSec = Math.min(delta / 1000, 0.1);
-    const lerpAlpha = 1 - Math.exp(-14 * dtSec);
+    const lerpAlpha = 1 - Math.exp(-16 * dtSec);
     const tSec = time / 1000;
 
-    // 1. Animate torches
+    // 1. Animate castle wall torches
     for (const torch of this.torches) {
       const flicker = 0.78 + 0.22 * Math.sin(tSec * 9.5 + torch.phase);
       torch.glow.setAlpha(0.16 * flicker);
@@ -216,184 +290,146 @@ export class BattleScene extends Phaser.Scene {
       torch.flame.setScale(1, 0.85 + 0.3 * Math.sin(tSec * 14 + torch.phase));
     }
 
-    // 2. Animate spawn portals
-    for (let i = 0; i < this.spawnPortals.length; i += 1) {
-      const portal = this.spawnPortals[i];
-      const pulse = 0.82 + 0.18 * Math.sin(tSec * 3.2 + i * 1.4);
-      portal.setAlpha(0.68 * pulse);
-      portal.setScale(0.95 + 0.08 * pulse, 1.0 + 0.06 * Math.cos(tSec * 2.4 + i));
-    }
+    // 2. Animate hero
+    this.updateHeroVisual(time, tSec, lerpAlpha);
 
-    // 3. Interpolate & bob heroes
-    const stance: TacticalStance = this.latestSnapshot?.stance ?? 'defense';
-    const stanceStyle = STANCE_VISUALS[stance];
-    let tankPos: { x: number; y: number } | null = null;
+    // 3. Animate soldiers
+    this.updateSoldierVisuals(time, tSec, lerpAlpha);
 
-    for (const hv of this.heroVisuals.values()) {
-      const prevX = hv.currentX;
-      const prevY = hv.currentY;
-      hv.currentX = Phaser.Math.Linear(hv.currentX, hv.targetX, lerpAlpha);
-      hv.currentY = Phaser.Math.Linear(hv.currentY, hv.targetY, lerpAlpha);
+    // 4. Animate enemies
+    this.updateEnemyVisuals(time, tSec, lerpAlpha);
 
-      const moveDist = Math.hypot(hv.currentX - prevX, hv.currentY - prevY);
-      const bobSpeed = moveDist > 0.35 ? 11 : 4.2;
-      const bobAmp = moveDist > 0.35 ? 2.6 : 1.4;
-      const bobY = hv.alive ? Math.round(Math.sin(tSec * bobSpeed + hv.bobPhase) * bobAmp) : 0;
+    // 5. Redraw dynamic ground overlays (formation banner + slots, telegraphs, volleys)
+    this.drawFormationOverlay(tSec);
+    this.drawTelegraphsAndVolleys(tSec);
 
-      hv.container.setPosition(Math.round(hv.currentX), Math.round(hv.currentY));
-      hv.container.setDepth(20 + hv.currentY * 0.01);
-      hv.sprite.setY(bobY);
-
-      // Aura ring pulse
-      hv.auraRing.setStrokeStyle(2, stanceStyle.color, hv.alive ? 0.65 + 0.25 * Math.sin(tSec * 4.5 + hv.bobPhase) : 0);
-      hv.auraRing.setFillStyle(stanceStyle.color, hv.alive ? 0.12 : 0);
-
-      // Clear expired hit flash
-      if (hv.hitFlashUntil > 0 && time >= hv.hitFlashUntil) {
-        hv.hitFlashUntil = 0;
-        hv.sprite.clearTint();
-      }
-
-      if (hv.role === 'tank' && hv.alive) {
-        tankPos = { x: hv.currentX, y: hv.currentY };
-      }
-    }
-
-    // 4. Tank intercept radius circle
-    this.currentInterceptRadius = Phaser.Math.Linear(
-      this.currentInterceptRadius,
-      this.targetInterceptRadius,
-      1 - Math.exp(-8 * dtSec),
-    );
-    this.drawTankInterceptCircle(tankPos, stance, tSec);
-
-    // 5. Interpolate & bob enemies
-    for (const ev of this.enemyVisuals.values()) {
-      const prevX = ev.currentX;
-      const prevY = ev.currentY;
-      ev.currentX = Phaser.Math.Linear(ev.currentX, ev.targetX, lerpAlpha);
-      ev.currentY = Phaser.Math.Linear(ev.currentY, ev.targetY, lerpAlpha);
-
-      const moveDist = Math.hypot(ev.currentX - prevX, ev.currentY - prevY);
-      const bobSpeed = ev.archetype === 'goblin' ? 12 : ev.archetype === 'brute' ? 6.5 : 8.5;
-      const bobAmp = moveDist > 0.25 ? 2.4 : 1.2;
-      const bobY = ev.alive ? Math.round(Math.sin(tSec * bobSpeed + ev.bobPhase) * bobAmp) : 0;
-
-      ev.container.setPosition(Math.round(ev.currentX), Math.round(ev.currentY));
-      ev.container.setDepth(20 + ev.currentY * 0.01);
-      ev.sprite.setY(bobY);
-
-      if (ev.dangerRing) {
-        const pulse = 0.55 + 0.45 * Math.sin(tSec * 8 + ev.bobPhase);
-        ev.dangerRing.setStrokeStyle(1.5, 0xf97316, 0.35 + 0.45 * pulse);
-        ev.dangerRing.setScale(0.92 + 0.12 * pulse);
-      }
-
-      if (ev.hitFlashUntil > 0 && time >= ev.hitFlashUntil) {
-        ev.hitFlashUntil = 0;
-        ev.sprite.clearTint();
-      }
-    }
-
-    // 6. Decay screen-edge tactical tint pulse
+    // 6. Decay screen-edge pulse
     if (this.edgePulseAlpha > 0.005) {
-      this.edgePulseAlpha = Math.max(0, this.edgePulseAlpha - dtSec * 1.15);
+      this.edgePulseAlpha = Math.max(0, this.edgePulseAlpha - dtSec * 1.4);
       this.drawEdgePulse();
     } else if (this.edgePulseAlpha > 0) {
       this.edgePulseAlpha = 0;
       this.edgePulseGraphics.clear();
     }
+
+    // 7. Draw tactical mouse crosshair
+    this.drawCrosshair(tSec);
   }
+
+  // ---------------------------------------------------------------------------
+  // Environment Construction
+  // ---------------------------------------------------------------------------
 
   private buildBattleground(): void {
     const g = this.add.graphics().setDepth(0);
     const tile = 24;
+    const roadTop = Math.round(this.arenaHeight * 0.27); // ~162
+    const roadBottom = Math.round(this.arenaHeight * 0.73); // ~438
 
-    // Night-village dark grass/earth checkerboard tiles
+    // Pixel grid checkerboard: dark mossy grass on flanks, packed dirt/cobble on central siege road
     for (let y = 0; y < this.arenaHeight; y += tile) {
+      const inRoad = y >= roadTop && y < roadBottom;
       for (let x = this.gateX; x < this.arenaWidth; x += tile) {
-        const isAlt = ((x / tile + y / tile) | 0) % 2 === 0;
-        const baseColor = isAlt ? 0x0f172a : 0x111c33;
+        const isAlt = ((Math.floor(x / tile) + Math.floor(y / tile)) & 1) === 0;
+        let baseColor: number;
+        if (inRoad) {
+          baseColor = isAlt ? 0x1b2232 : 0x1f283b;
+        } else {
+          baseColor = isAlt ? 0x0e1929 : 0x112031;
+        }
         g.fillStyle(baseColor, 1);
         g.fillRect(x, y, tile, tile);
 
-        // Subtle pixel grass tufts (deterministic hash)
+        // Subtle pixel grid outline for crisp movement & range readability
+        g.lineStyle(1, inRoad ? 0x2a364d : 0x16293d, 0.32);
+        g.strokeRect(x, y, tile, tile);
+
+        // Deterministic terrain texture details
         const hash = ((x * 73 + y * 151) ^ (x * 19)) & 0xff;
-        if (hash < 34) {
-          g.fillStyle(0x16293d, 0.85);
-          g.fillRect(x + (hash % 16), y + ((hash * 3) % 16), 4, 2);
-        } else if (hash > 235) {
-          g.fillStyle(0x1e293b, 0.75);
-          g.fillRect(x + (hash % 14), y + ((hash * 5) % 14), 2, 2);
+        if (inRoad) {
+          if (hash < 36) {
+            // Cobblestone flecks
+            g.fillStyle(0x334155, 0.55);
+            g.fillRect(x + (hash % 14) + 2, y + ((hash * 5) % 14) + 2, 6, 4);
+          } else if (hash > 228) {
+            g.fillStyle(0x111827, 0.5);
+            g.fillRect(x + (hash % 16) + 2, y + ((hash * 3) % 16) + 2, 4, 2);
+          }
+        } else {
+          if (hash < 44) {
+            // Grass tufts
+            g.fillStyle(0x164e3f, 0.55);
+            g.fillRect(x + (hash % 14) + 2, y + ((hash * 3) % 14) + 2, 4, 2);
+            g.fillRect(x + (hash % 14) + 4, y + ((hash * 3) % 14), 2, 2);
+          } else if (hash > 236) {
+            // Small pebbles
+            g.fillStyle(0x334155, 0.45);
+            g.fillRect(x + (hash % 16), y + ((hash * 7) % 16), 4, 2);
+          }
         }
       }
     }
 
-    // Three subtle tactical dirt lanes (top, mid, bottom)
-    const laneYs = [165, 270, 375];
-    for (const ly of laneYs) {
-      g.fillStyle(0x172033, 0.72);
-      g.fillRect(this.gateX, ly - 24, this.arenaWidth - this.gateX, 48);
+    // Cobblestone road border curbs
+    g.fillStyle(0x334155, 0.8);
+    g.fillRect(this.gateX, roadTop - 4, this.arenaWidth - this.gateX, 4);
+    g.fillRect(this.gateX, roadBottom, this.arenaWidth - this.gateX, 4);
+    g.fillStyle(0x0b1120, 0.7);
+    g.fillRect(this.gateX, roadTop - 6, this.arenaWidth - this.gateX, 2);
+    g.fillRect(this.gateX, roadBottom + 4, this.arenaWidth - this.gateX, 2);
 
-      // Subtle stone flecks along the lane
-      for (let x = this.gateX + 18; x < this.arenaWidth - 36; x += 44) {
-        g.fillStyle(0x24324a, 0.55);
-        g.fillRect(x, ly - 18 + ((x * 7) % 32), 6, 2);
-      }
+    // Subtle wheel ruts along central siege road
+    const midY = Math.round(this.arenaHeight / 2);
+    g.fillStyle(0x0f172a, 0.25);
+    g.fillRect(this.gateX, midY - 42, this.arenaWidth - this.gateX, 6);
+    g.fillRect(this.gateX, midY + 36, this.arenaWidth - this.gateX, 6);
 
-      // Dashed tactical lane guide line
-      g.fillStyle(0x38bdf8, 0.14);
-      for (let x = this.gateX + 24; x < this.arenaWidth - 64; x += 28) {
-        g.fillRect(x, ly - 1, 12, 2);
-      }
-    }
+    // Subtle top & bottom dark perimeter framing
+    g.fillStyle(0x070b14, 0.65);
+    g.fillRect(this.gateX, 0, this.arenaWidth - this.gateX, 22);
+    g.fillRect(this.gateX, this.arenaHeight - 22, this.arenaWidth - this.gateX, 22);
 
-    // Subtle top & bottom dark forest border framing
-    g.fillStyle(0x070b14, 0.75);
-    g.fillRect(this.gateX, 0, this.arenaWidth - this.gateX, 34);
-    g.fillRect(this.gateX, this.arenaHeight - 34, this.arenaWidth - this.gateX, 34);
-
-    // Subtle defense line marker in front of the gate
-    g.fillStyle(0x38bdf8, 0.18);
-    for (let y = 44; y < this.arenaHeight - 44; y += 16) {
-      g.fillRect(this.gateX + 8, y, 2, 8);
-    }
-
-    // Lane chevron markers near right flank
+    // Tactical defense line markers near the gate & enemy approach chevrons on right flank
     const guide = this.add.graphics().setDepth(5);
-    for (const ly of laneYs) {
-      guide.lineStyle(2, 0x94a3b8, 0.18);
+    guide.fillStyle(0x38bdf8, 0.22);
+    for (let y = 32; y < this.arenaHeight - 32; y += 16) {
+      guide.fillRect(this.gateX + 10, y, 2, 8);
+    }
+
+    const approachYs = [130, 300, 470];
+    for (const ay of approachYs) {
+      guide.lineStyle(2, 0xef4444, 0.2);
       guide.beginPath();
-      guide.moveTo(this.arenaWidth - 92, ly - 8);
-      guide.lineTo(this.arenaWidth - 102, ly);
-      guide.lineTo(this.arenaWidth - 92, ly + 8);
+      guide.moveTo(this.arenaWidth - 38, ay - 10);
+      guide.lineTo(this.arenaWidth - 50, ay);
+      guide.lineTo(this.arenaWidth - 38, ay + 10);
       guide.strokePath();
     }
   }
 
-  private buildVillageGate(): void {
-    const g = this.add.graphics().setDepth(10);
+  private buildCastleWall(): void {
+    const g = this.add.graphics().setDepth(8);
     const w = this.gateX;
     const h = this.arenaHeight;
 
-    // Inner village dark stone backdrop
-    g.fillStyle(0x111827, 1);
+    // Inner stone backdrop
+    g.fillStyle(0x0f172a, 1);
     g.fillRect(0, 0, w, h);
 
-    // Stone brick wall body
+    // Stone wall body
     g.fillStyle(0x334155, 1);
-    g.fillRect(10, 0, w - 18, h);
+    g.fillRect(8, 0, w - 16, h);
 
-    // Pixel brick lines
+    // Pixel mortar / brick grid
     g.fillStyle(0x1e293b, 1);
     for (let y = 0; y < h; y += 16) {
-      g.fillRect(10, y, w - 18, 2);
+      g.fillRect(8, y, w - 16, 2);
       const offset = (y / 16) % 2 === 0 ? 18 : 30;
       g.fillRect(offset, y, 2, 16);
-      g.fillRect(offset + 22, y, 2, 16);
+      g.fillRect(offset + 24, y, 2, 16);
     }
 
-    // Battlements / Crenellations on the eastern (battlefield-facing) edge
+    // Eastern battlements / crenellations facing the battlefield
     for (let y = 8; y < h - 8; y += 28) {
       g.fillStyle(0x475569, 1);
       g.fillRect(w - 10, y, 10, 18);
@@ -403,54 +439,43 @@ export class BattleScene extends Phaser.Scene {
       g.fillRect(w - 2, y, 2, 18);
     }
 
-    // Central wooden gatehouse (y = 205..335)
-    const gateTop = 205;
-    const gateH = 130;
+    // Reinforced wooden gatehouse (centered vertically)
+    const gateH = 160;
+    const gateTop = Math.round((h - gateH) / 2);
     g.fillStyle(0x451a03, 1);
-    g.fillRect(14, gateTop, w - 18, gateH);
+    g.fillRect(12, gateTop, w - 16, gateH);
 
     // Wood planks
     g.fillStyle(0x78350f, 1);
     for (let y = gateTop + 6; y < gateTop + gateH - 6; y += 14) {
-      g.fillRect(16, y, w - 24, 10);
+      g.fillRect(14, y, w - 22, 10);
     }
 
-    // Iron reinforcement bands & studs
+    // Iron reinforcement bands & golden lock emblem
     g.fillStyle(0x94a3b8, 1);
-    g.fillRect(14, gateTop + 18, w - 18, 6);
-    g.fillRect(14, gateTop + gateH - 24, w - 18, 6);
-    g.fillStyle(0xfacc15, 0.85);
-    g.fillRect(w - 16, gateTop + gateH / 2 - 4, 6, 8);
+    g.fillRect(12, gateTop + 20, w - 16, 6);
+    g.fillRect(12, gateTop + gateH - 26, w - 16, 6);
+    g.fillStyle(0xfacc15, 0.9);
+    g.fillRect(w - 16, Math.round(h / 2) - 5, 6, 10);
 
-    // Bastion torches (top & bottom of gatehouse)
+    // Bastion torches
     const torchPositions = [
-      { x: w - 6, y: gateTop - 16 },
-      { x: w - 6, y: gateTop + gateH + 16 },
-      { x: w - 6, y: 76 },
-      { x: w - 6, y: h - 76 },
+      { x: w - 6, y: gateTop - 18 },
+      { x: w - 6, y: gateTop + gateH + 18 },
+      { x: w - 6, y: 84 },
+      { x: w - 6, y: h - 84 },
     ];
 
     for (let i = 0; i < torchPositions.length; i += 1) {
       const tp = torchPositions[i];
-      // Bracket
       g.fillStyle(0x1e293b, 1);
       g.fillRect(tp.x - 4, tp.y + 2, 8, 6);
 
-      const glow = this.add
-        .circle(tp.x, tp.y - 2, 26, 0xf59e0b, 0.16)
-        .setDepth(12);
-      const flame = this.add
-        .rectangle(tp.x, tp.y - 2, 6, 8, 0xfbbf24, 1)
-        .setDepth(13);
+      const glow = this.add.circle(tp.x, tp.y - 2, 26, 0xf59e0b, 0.16).setDepth(13);
+      const flame = this.add.rectangle(tp.x, tp.y - 2, 6, 8, 0xfbbf24, 1).setDepth(13);
       this.add.rectangle(tp.x, tp.y - 1, 3, 4, 0xfef08a, 1).setDepth(14);
 
-      this.torches.push({
-        glow,
-        flame,
-        baseX: tp.x,
-        baseY: tp.y,
-        phase: i * 1.7,
-      });
+      this.torches.push({ glow, flame, phase: i * 1.7 });
     }
 
     // Gate damage flash overlay
@@ -458,10 +483,10 @@ export class BattleScene extends Phaser.Scene {
       .rectangle(w / 2, h / 2, w + 4, h, 0xef4444, 0)
       .setDepth(35);
 
-    // Gate HP bar (top-left on the wall header)
+    // Gate HP bar & label
     this.gateHpGraphics = this.add.graphics().setDepth(36);
     this.gateHpText = this.add
-      .text(8, 10, '城門 300/300', {
+      .text(8, 10, '城門 500/500', {
         fontFamily: 'monospace, "Microsoft JhengHei", sans-serif',
         fontSize: '11px',
         fontStyle: 'bold',
@@ -471,52 +496,46 @@ export class BattleScene extends Phaser.Scene {
       })
       .setDepth(37);
 
-    this.updateGateHpBar(300, 300);
-  }
+    // Hero respawn countdown near gate
+    this.heroRespawnText = this.add
+      .text(w + 14, Math.round(h / 2), '', {
+        fontFamily: '"Microsoft JhengHei", system-ui, sans-serif',
+        fontSize: '13px',
+        fontStyle: 'bold',
+        color: '#fde047',
+        backgroundColor: '#020617cc',
+        padding: { x: 8, y: 4 },
+        stroke: '#020617',
+        strokeThickness: 3,
+      })
+      .setOrigin(0, 0.5)
+      .setDepth(38)
+      .setVisible(false);
 
-  private buildSpawnPortals(): void {
-    const laneYs = [165, 270, 375];
-    const portalX = this.arenaWidth - 46;
-
-    for (const ly of laneYs) {
-      const portal = this.add
-        .image(portalX, ly, 'spawn-portal')
-        .setDepth(6)
-        .setAlpha(0.7);
-      this.spawnPortals.push(portal);
-    }
+    this.updateGateHpBar(500, 500);
   }
 
   private buildOverlays(): void {
-    this.interceptGraphics = this.add.graphics().setDepth(15);
+    this.formationOverlayGraphics = this.add.graphics().setDepth(10);
+    this.telegraphGraphics = this.add.graphics().setDepth(12);
+    this.heroGroundGraphics = this.add.graphics().setDepth(15);
     this.edgePulseGraphics = this.add.graphics().setDepth(60);
+    this.crosshairGraphics = this.add.graphics().setDepth(90);
 
-    // Stance change banner (top-center)
-    this.stanceBannerContainer = this.add
-      .container(this.arenaWidth / 2, 58)
-      .setDepth(62)
-      .setAlpha(0);
-
-    this.stanceBannerBg = this.add.graphics();
-    this.stanceBannerText = this.add
-      .text(0, 0, '', {
-        fontFamily: '"Microsoft JhengHei", system-ui, sans-serif',
-        fontSize: '18px',
-        fontStyle: 'bold',
-        color: '#f8fafc',
-        stroke: '#020617',
-        strokeThickness: 4,
-      })
-      .setOrigin(0.5);
-
-    this.stanceBannerContainer.add([this.stanceBannerBg, this.stanceBannerText]);
+    // Regiment Hold Banner / Flag Marker
+    this.bannerContainer = this.add.container(0, 0).setDepth(21).setVisible(false);
+    const poleShadow = this.add.ellipse(0, 3, 16, 6, 0x020617, 0.55);
+    const pole = this.add.rectangle(0, -14, 3, 32, 0xe2e8f0, 1);
+    const finial = this.add.rectangle(0, -31, 5, 5, 0xfacc15, 1);
+    this.bannerClothGraphics = this.add.graphics();
+    this.bannerContainer.add([poleShadow, pole, finial, this.bannerClothGraphics]);
   }
 
   private updateGateHpBar(hp: number, maxHp: number): void {
     const ratio = maxHp > 0 ? Phaser.Math.Clamp(hp / maxHp, 0, 1) : 0;
     const barX = 8;
     const barY = 26;
-    const barW = 124;
+    const barW = 128;
     const barH = 8;
 
     this.gateHpGraphics.clear();
@@ -532,30 +551,643 @@ export class BattleScene extends Phaser.Scene {
     this.gateHpText.setText(`城門 ${Math.ceil(hp)}/${maxHp}`);
   }
 
-  private drawTankInterceptCircle(
-    tankPos: { x: number; y: number } | null,
-    stance: TacticalStance,
-    tSec: number,
+  // ---------------------------------------------------------------------------
+  // Entity Syncing
+  // ---------------------------------------------------------------------------
+
+  private syncHero(hero: HeroState): void {
+    if (!this.heroVisual) {
+      const container = this.add.container(hero.x, hero.y).setDepth(20);
+      const shadow = this.add.ellipse(0, 15, 26, 9, 0x020617, 0.6);
+      const warcryRing = this.add
+        .circle(0, 12, 24, 0xfacc15, 0.14)
+        .setStrokeStyle(2, 0xfacc15, 0.9)
+        .setScale(1, 0.52)
+        .setVisible(false);
+      const sprite = this.add.image(0, 0, HERO_TEXTURE_KEY).setOrigin(0.5, 0.5);
+      const barGraphics = this.add.graphics();
+
+      container.add([shadow, warcryRing, sprite, barGraphics]);
+
+      this.heroVisual = {
+        container,
+        shadow,
+        warcryRing,
+        sprite,
+        barGraphics,
+        currentX: hero.x,
+        currentY: hero.y,
+        targetX: hero.x,
+        targetY: hero.y,
+        facingAngle: hero.facingAngle,
+        alive: hero.alive,
+        hitFlashUntil: 0,
+        nextGhostAt: 0,
+        bobPhase: 0,
+      };
+    }
+
+    const hv = this.heroVisual;
+    if (Math.hypot(hero.x - hv.currentX, hero.y - hv.currentY) > 180) {
+      hv.currentX = hero.x;
+      hv.currentY = hero.y;
+    }
+
+    hv.targetX = hero.x;
+    hv.targetY = hero.y;
+    hv.facingAngle = hero.facingAngle;
+    hv.alive = hero.alive;
+    hv.container.setAlpha(hero.alive ? 1 : 0.25);
+    hv.warcryRing.setVisible(hero.alive && hero.warcryRemainingSec > 0);
+
+    // Overhead HP + stamina mini-bar
+    this.redrawHeroBars(hv.barGraphics, hero);
+
+    // Respawn countdown at gate when downed
+    if (!hero.alive) {
+      const secs = Math.max(0, hero.respawnRemainingSec).toFixed(1);
+      this.heroRespawnText.setText(`主將復活中 ${secs}s`).setVisible(true);
+    } else {
+      this.heroRespawnText.setVisible(false);
+    }
+  }
+
+  private redrawHeroBars(g: Phaser.GameObjects.Graphics, hero: HeroState): void {
+    g.clear();
+    if (!hero.alive) return;
+
+    const w = 40;
+    const hpH = 5;
+    const stamH = 3;
+    const x = -w / 2;
+    const y = -31;
+
+    const hpRatio = hero.maxHp > 0 ? Phaser.Math.Clamp(hero.hp / hero.maxHp, 0, 1) : 0;
+    const stamRatio =
+      hero.maxStamina > 0 ? Phaser.Math.Clamp(hero.stamina / hero.maxStamina, 0, 1) : 0;
+
+    // Frame
+    g.fillStyle(0x020617, 0.9);
+    g.fillRect(x - 1, y - 1, w + 2, hpH + stamH + 3);
+
+    // HP bar
+    g.fillStyle(0x1e293b, 1);
+    g.fillRect(x, y, w, hpH);
+    const hpColor = hpRatio > 0.45 ? 0x22c55e : hpRatio > 0.2 ? 0xf59e0b : 0xef4444;
+    g.fillStyle(hpColor, 1);
+    g.fillRect(x, y, Math.round(w * hpRatio), hpH);
+
+    // Stamina mini-bar
+    const sy = y + hpH + 1;
+    g.fillStyle(0x0f172a, 1);
+    g.fillRect(x, sy, w, stamH);
+    g.fillStyle(0x38bdf8, 1);
+    g.fillRect(x, sy, Math.round(w * stamRatio), stamH);
+  }
+
+  private syncRegiment(snapshot: CombatSnapshot): void {
+    const regType = snapshot.regiment.type;
+
+    for (const soldier of snapshot.regiment.soldiers) {
+      if (!soldier.alive) continue;
+
+      let sv = this.soldierVisuals.get(soldier.id);
+      if (!sv || sv.regimentType !== regType) {
+        if (sv) {
+          sv.container.destroy();
+        }
+        sv = this.createSoldierVisual(soldier, regType);
+        this.soldierVisuals.set(soldier.id, sv);
+      }
+
+      if (Math.hypot(soldier.x - sv.currentX, soldier.y - sv.currentY) > 180) {
+        sv.currentX = soldier.x;
+        sv.currentY = soldier.y;
+      }
+
+      sv.targetX = soldier.x;
+      sv.targetY = soldier.y;
+      sv.facingAngle = soldier.facingAngle;
+      sv.shieldBlocking = soldier.shieldBlocking;
+      sv.charging = soldier.chargingRemainingSec > 0;
+      sv.alive = soldier.alive;
+
+      this.redrawSoldierBar(sv.barGraphics, soldier.hp, soldier.maxHp);
+    }
+  }
+
+  private createSoldierVisual(soldier: SoldierState, regType: RegimentType): SoldierVisual {
+    const container = this.add.container(soldier.x, soldier.y).setDepth(20);
+    const shadow = this.add.ellipse(0, 10, 16, 6, 0x020617, 0.52);
+    const shieldGraphics = this.add.graphics();
+    const sprite = this.add.image(0, 0, getSoldierTextureKey(regType)).setOrigin(0.5, 0.5);
+    const barGraphics = this.add.graphics();
+
+    container.add([shadow, sprite, shieldGraphics, barGraphics]);
+
+    return {
+      id: soldier.id,
+      regimentType: regType,
+      container,
+      shadow,
+      shieldGraphics,
+      sprite,
+      barGraphics,
+      currentX: soldier.x,
+      currentY: soldier.y,
+      targetX: soldier.x,
+      targetY: soldier.y,
+      facingAngle: soldier.facingAngle,
+      shieldBlocking: soldier.shieldBlocking,
+      charging: soldier.chargingRemainingSec > 0,
+      alive: soldier.alive,
+      hitFlashUntil: 0,
+      nextChargeTrailAt: 0,
+      bobPhase: soldier.index * 0.75 + Math.random() * 0.5,
+    };
+  }
+
+  private redrawSoldierBar(g: Phaser.GameObjects.Graphics, hp: number, maxHp: number): void {
+    g.clear();
+    if (hp >= maxHp || maxHp <= 0) return;
+
+    const w = 18;
+    const h = 3;
+    const x = -w / 2;
+    const y = -17;
+    const ratio = Phaser.Math.Clamp(hp / maxHp, 0, 1);
+
+    g.fillStyle(0x020617, 0.85);
+    g.fillRect(x - 1, y - 1, w + 2, h + 2);
+    g.fillStyle(0x1e293b, 1);
+    g.fillRect(x, y, w, h);
+    g.fillStyle(ratio > 0.4 ? 0x38bdf8 : 0xf59e0b, 1);
+    g.fillRect(x, y, Math.max(1, Math.round(w * ratio)), h);
+  }
+
+  private syncEnemies(enemies: EnemyState[]): void {
+    for (const enemy of enemies) {
+      if (!enemy.alive) continue;
+
+      let ev = this.enemyVisuals.get(enemy.id);
+      if (!ev) {
+        ev = this.createEnemyVisual(enemy);
+        this.enemyVisuals.set(enemy.id, ev);
+      }
+
+      if (Math.hypot(enemy.x - ev.currentX, enemy.y - ev.currentY) > 180) {
+        ev.currentX = enemy.x;
+        ev.currentY = enemy.y;
+      }
+
+      ev.targetX = enemy.x;
+      ev.targetY = enemy.y;
+      ev.facingAngle = enemy.facingAngle;
+      ev.alive = enemy.alive;
+
+      const barW = enemy.isCommander ? 48 : 26;
+      const barY = enemy.isCommander ? -32 : -20;
+      this.redrawEnemyBar(ev.barGraphics, enemy.hp, enemy.maxHp, barW, barY, enemy.isCommander);
+    }
+  }
+
+  private createEnemyVisual(enemy: EnemyState): EnemyVisual {
+    const container = this.add.container(enemy.x, enemy.y).setDepth(20);
+    const shadowW = enemy.isCommander ? 34 : enemy.radius > 13 ? 22 : 17;
+    const shadowY = enemy.isCommander ? 18 : 11;
+    const shadow = this.add.ellipse(0, shadowY, shadowW, 7, 0x020617, 0.56);
+
+    const sprite = this.add.image(0, 0, getEnemyTextureKey(enemy.type)).setOrigin(0.5, 0.5);
+    const barGraphics = this.add.graphics();
+
+    let bossTag: Phaser.GameObjects.Text | null = null;
+    if (enemy.isCommander) {
+      bossTag = this.add
+        .text(0, 24, `★ ${enemy.name}`, {
+          fontFamily: '"Microsoft JhengHei", system-ui, sans-serif',
+          fontSize: '11px',
+          fontStyle: 'bold',
+          color: '#facc15',
+          stroke: '#020617',
+          strokeThickness: 3,
+        })
+        .setOrigin(0.5, 0);
+    }
+
+    const children: Phaser.GameObjects.GameObject[] = [shadow, sprite, barGraphics];
+    if (bossTag) children.push(bossTag);
+    container.add(children);
+
+    return {
+      id: enemy.id,
+      type: enemy.type,
+      isCommander: enemy.isCommander,
+      container,
+      shadow,
+      sprite,
+      barGraphics,
+      bossTag,
+      currentX: enemy.x,
+      currentY: enemy.y,
+      targetX: enemy.x,
+      targetY: enemy.y,
+      facingAngle: enemy.facingAngle,
+      alive: enemy.alive,
+      hitFlashUntil: 0,
+      bobPhase: Math.random() * Math.PI * 2,
+    };
+  }
+
+  private redrawEnemyBar(
+    g: Phaser.GameObjects.Graphics,
+    hp: number,
+    maxHp: number,
+    w: number,
+    y: number,
+    isCommander: boolean,
   ): void {
-    this.interceptGraphics.clear();
-    if (!tankPos) return;
+    g.clear();
+    if (!isCommander && hp >= maxHp) return;
 
-    const isDefense = stance === 'defense';
-    const r = this.currentInterceptRadius;
-    const color = isDefense ? 0x38bdf8 : 0x64748b;
-    const fillAlpha = isDefense ? 0.11 + 0.03 * Math.sin(tSec * 3.5) : 0.05;
-    const strokeAlpha = isDefense ? 0.52 : 0.24;
+    const h = isCommander ? 6 : 4;
+    const x = -w / 2;
+    const ratio = maxHp > 0 ? Phaser.Math.Clamp(hp / maxHp, 0, 1) : 0;
 
-    this.interceptGraphics.fillStyle(color, fillAlpha);
-    this.interceptGraphics.fillCircle(tankPos.x, tankPos.y, r);
+    g.fillStyle(0x020617, 0.9);
+    g.fillRect(x - 1, y - 1, w + 2, h + 2);
+    if (isCommander) {
+      g.lineStyle(1, 0xfacc15, 0.9);
+      g.strokeRect(x - 1.5, y - 1.5, w + 3, h + 3);
+    }
 
-    this.interceptGraphics.lineStyle(isDefense ? 2 : 1, color, strokeAlpha);
-    this.interceptGraphics.strokeCircle(tankPos.x, tankPos.y, r);
+    g.fillStyle(0x1e293b, 1);
+    g.fillRect(x, y, w, h);
+    g.fillStyle(isCommander ? 0xf59e0b : 0xef4444, 1);
+    g.fillRect(x, y, Math.max(1, Math.round(w * ratio)), h);
+  }
 
-    // Subtle inner tactical ring when in defense stance
-    if (isDefense) {
-      this.interceptGraphics.lineStyle(1, 0xbae6fd, 0.28);
-      this.interceptGraphics.strokeCircle(tankPos.x, tankPos.y, r - 6);
+  private pruneDeadUnits(snapshot: CombatSnapshot): void {
+    const aliveSoldiers = new Set<string>();
+    for (const s of snapshot.regiment.soldiers) {
+      if (s.alive) aliveSoldiers.add(s.id);
+    }
+    for (const [id, sv] of this.soldierVisuals.entries()) {
+      if (!aliveSoldiers.has(id)) {
+        sv.container.destroy();
+        this.soldierVisuals.delete(id);
+      }
+    }
+
+    const aliveEnemies = new Set<string>();
+    for (const e of snapshot.enemies) {
+      if (e.alive) aliveEnemies.add(e.id);
+    }
+    for (const [id, ev] of this.enemyVisuals.entries()) {
+      if (!aliveEnemies.has(id)) {
+        ev.container.destroy();
+        this.enemyVisuals.delete(id);
+      }
+    }
+  }
+
+  private clearAllUnits(): void {
+    if (this.heroVisual) {
+      this.heroVisual.container.destroy();
+      this.heroVisual = null;
+    }
+    for (const sv of this.soldierVisuals.values()) {
+      sv.container.destroy();
+    }
+    this.soldierVisuals.clear();
+
+    for (const ev of this.enemyVisuals.values()) {
+      ev.container.destroy();
+    }
+    this.enemyVisuals.clear();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Frame Updates & Overlays
+  // ---------------------------------------------------------------------------
+
+  private updateHeroVisual(time: number, tSec: number, lerpAlpha: number): void {
+    this.heroGroundGraphics.clear();
+    const hv = this.heroVisual;
+    const hero = this.latestSnapshot?.hero;
+    if (!hv || !hero) return;
+
+    const prevX = hv.currentX;
+    const prevY = hv.currentY;
+    hv.currentX = Phaser.Math.Linear(hv.currentX, hv.targetX, lerpAlpha);
+    hv.currentY = Phaser.Math.Linear(hv.currentY, hv.targetY, lerpAlpha);
+
+    const moveDist = Math.hypot(hv.currentX - prevX, hv.currentY - prevY);
+    const bobSpeed = moveDist > 0.35 ? 12 : 4.5;
+    const bobAmp = moveDist > 0.35 ? 2.5 : 1.2;
+    const bobY = hv.alive ? Math.round(Math.sin(tSec * bobSpeed + hv.bobPhase) * bobAmp) : 0;
+
+    hv.container.setPosition(Math.round(hv.currentX), Math.round(hv.currentY));
+    hv.container.setDepth(20 + hv.currentY * 0.01);
+    hv.sprite.setY(bobY);
+    hv.sprite.setFlipX(Math.cos(hv.facingAngle) < 0);
+
+    // Golden pulsing warcry aura
+    if (hv.alive && hero.warcryRemainingSec > 0) {
+      const pulse = 0.75 + 0.25 * Math.sin(tSec * 8);
+      hv.warcryRing.setScale(0.95 + 0.14 * pulse, 0.5 + 0.07 * pulse);
+      hv.warcryRing.setStrokeStyle(2.5, 0xfacc15, 0.65 + 0.3 * pulse);
+      hv.warcryRing.setFillStyle(0xfacc15, 0.1 + 0.08 * pulse);
+    }
+
+    // Dodge / invulnerability translucent ghost afterimages
+    const isDodgingOrInvuln =
+      hv.alive && (hero.dodgeRemainingSec > 0 || hero.invulnerableRemainingSec > 0);
+    if (isDodgingOrInvuln) {
+      hv.sprite.setAlpha(0.72);
+      if (time >= hv.nextGhostAt) {
+        hv.nextGhostAt = time + 42;
+        this.spawnHeroGhost(hv.currentX, hv.currentY + bobY, hv.sprite.flipX);
+      }
+    } else if (hv.alive) {
+      hv.sprite.setAlpha(1);
+    }
+
+    if (hv.hitFlashUntil > 0 && time >= hv.hitFlashUntil) {
+      hv.hitFlashUntil = 0;
+      hv.sprite.clearTint();
+    }
+
+    // Directional facing arc + pointer chevron under feet
+    if (hv.alive) {
+      const gx = hv.currentX;
+      const gy = hv.currentY + 11;
+      const ang = hv.facingAngle;
+      const r = 20;
+
+      // Subtle base ring
+      this.heroGroundGraphics.lineStyle(1.5, 0x38bdf8, 0.38);
+      this.heroGroundGraphics.strokeCircle(gx, gy, r);
+
+      // Highlighted facing arc
+      this.heroGroundGraphics.lineStyle(2.5, 0x7dd3fc, 0.88);
+      this.heroGroundGraphics.beginPath();
+      this.heroGroundGraphics.arc(gx, gy, r, ang - 0.52, ang + 0.52, false);
+      this.heroGroundGraphics.strokePath();
+
+      // Small directional arrow tip at front of arc
+      const tipX = gx + Math.cos(ang) * (r + 7);
+      const tipY = gy + Math.sin(ang) * (r + 7);
+      const leftX = gx + Math.cos(ang - 0.25) * (r + 1);
+      const leftY = gy + Math.sin(ang - 0.25) * (r + 1);
+      const rightX = gx + Math.cos(ang + 0.25) * (r + 1);
+      const rightY = gy + Math.sin(ang + 0.25) * (r + 1);
+      this.heroGroundGraphics.fillStyle(0xfacc15, 0.92);
+      this.heroGroundGraphics.fillTriangle(tipX, tipY, leftX, leftY, rightX, rightY);
+    }
+  }
+
+  private spawnHeroGhost(x: number, y: number, flipX: boolean): void {
+    const ghost = this.add
+      .image(Math.round(x), Math.round(y), HERO_TEXTURE_KEY)
+      .setOrigin(0.5, 0.5)
+      .setFlipX(flipX)
+      .setTint(0x38bdf8)
+      .setAlpha(0.55)
+      .setDepth(19);
+
+    this.tweens.add({
+      targets: ghost,
+      alpha: 0,
+      scaleX: 1.08,
+      scaleY: 1.08,
+      duration: 180,
+      ease: 'Quad.easeOut',
+      onComplete: () => ghost.destroy(),
+    });
+  }
+
+  private updateSoldierVisuals(time: number, tSec: number, lerpAlpha: number): void {
+    for (const sv of this.soldierVisuals.values()) {
+      const prevX = sv.currentX;
+      const prevY = sv.currentY;
+      sv.currentX = Phaser.Math.Linear(sv.currentX, sv.targetX, lerpAlpha);
+      sv.currentY = Phaser.Math.Linear(sv.currentY, sv.targetY, lerpAlpha);
+
+      const moveDist = Math.hypot(sv.currentX - prevX, sv.currentY - prevY);
+      const bobSpeed = sv.charging ? 16 : moveDist > 0.3 ? 11 : 4.2;
+      const bobAmp = sv.charging ? 2.8 : moveDist > 0.3 ? 2.0 : 0.9;
+      const bobY = Math.round(Math.sin(tSec * bobSpeed + sv.bobPhase) * bobAmp);
+
+      sv.container.setPosition(Math.round(sv.currentX), Math.round(sv.currentY));
+      sv.container.setDepth(20 + sv.currentY * 0.01);
+      sv.sprite.setY(bobY);
+      sv.sprite.setFlipX(Math.cos(sv.facingAngle) < 0);
+
+      // Shield-glow rim when shieldBlocking
+      sv.shieldGraphics.clear();
+      if (sv.shieldBlocking) {
+        const pulse = 0.7 + 0.3 * Math.sin(tSec * 6 + sv.bobPhase);
+        sv.shieldGraphics.lineStyle(2.5, 0x38bdf8, 0.85 * pulse);
+        sv.shieldGraphics.beginPath();
+        sv.shieldGraphics.arc(0, 1, 13, sv.facingAngle - 0.85, sv.facingAngle + 0.85, false);
+        sv.shieldGraphics.strokePath();
+      }
+
+      // Charge streak trail when chargingRemainingSec > 0
+      if (sv.charging && time >= sv.nextChargeTrailAt) {
+        sv.nextChargeTrailAt = time + 55;
+        this.spawnChargeStreak(sv.currentX, sv.currentY, sv.facingAngle);
+      }
+
+      if (sv.hitFlashUntil > 0 && time >= sv.hitFlashUntil) {
+        sv.hitFlashUntil = 0;
+        sv.sprite.clearTint();
+      }
+    }
+  }
+
+  private spawnChargeStreak(x: number, y: number, angle: number): void {
+    const g = this.add.graphics().setDepth(18);
+    const backX = x - Math.cos(angle) * 20;
+    const backY = y - Math.sin(angle) * 20;
+    g.lineStyle(3, 0x7dd3fc, 0.8);
+    g.beginPath();
+    g.moveTo(backX, backY);
+    g.lineTo(x, y);
+    g.strokePath();
+
+    this.tweens.add({
+      targets: g,
+      alpha: 0,
+      duration: 180,
+      onComplete: () => g.destroy(),
+    });
+  }
+
+  private updateEnemyVisuals(time: number, tSec: number, lerpAlpha: number): void {
+    for (const ev of this.enemyVisuals.values()) {
+      const prevX = ev.currentX;
+      const prevY = ev.currentY;
+      ev.currentX = Phaser.Math.Linear(ev.currentX, ev.targetX, lerpAlpha);
+      ev.currentY = Phaser.Math.Linear(ev.currentY, ev.targetY, lerpAlpha);
+
+      const moveDist = Math.hypot(ev.currentX - prevX, ev.currentY - prevY);
+      const bobSpeed =
+        ev.type === 'goblin_raider' ? 13 : ev.isCommander ? 6 : 8.5;
+      const bobAmp = moveDist > 0.25 ? 2.2 : 1.0;
+      const bobY = Math.round(Math.sin(tSec * bobSpeed + ev.bobPhase) * bobAmp);
+
+      ev.container.setPosition(Math.round(ev.currentX), Math.round(ev.currentY));
+      ev.container.setDepth(20 + ev.currentY * 0.01);
+      ev.sprite.setY(bobY);
+      // Enemy pixel art faces left by default
+      ev.sprite.setFlipX(Math.cos(ev.facingAngle) > 0);
+
+      if (ev.hitFlashUntil > 0 && time >= ev.hitFlashUntil) {
+        ev.hitFlashUntil = 0;
+        ev.sprite.clearTint();
+      }
+    }
+  }
+
+  private drawFormationOverlay(tSec: number): void {
+    this.formationOverlayGraphics.clear();
+    const reg = this.latestSnapshot?.regiment;
+    if (!reg || reg.order !== 'hold') {
+      this.bannerContainer.setVisible(false);
+      return;
+    }
+
+    const ax = reg.anchorX;
+    const ay = reg.anchorY;
+    const pulse = 0.65 + 0.35 * Math.sin(tSec * 4.5);
+
+    // Pulsing anchor ground ring
+    this.formationOverlayGraphics.lineStyle(2, 0x38bdf8, 0.55 * pulse);
+    this.formationOverlayGraphics.strokeCircle(ax, ay, 18 + 3 * pulse);
+    this.formationOverlayGraphics.fillStyle(0x38bdf8, 0.12);
+    this.formationOverlayGraphics.fillCircle(ax, ay, 14);
+
+    // Subtle translucent formation slot dots for each alive soldier
+    for (const s of reg.soldiers) {
+      if (!s.alive) continue;
+      this.formationOverlayGraphics.fillStyle(0x38bdf8, 0.22);
+      this.formationOverlayGraphics.fillCircle(s.slotX, s.slotY + 8, 5);
+      this.formationOverlayGraphics.lineStyle(1, 0x7dd3fc, 0.5);
+      this.formationOverlayGraphics.strokeCircle(s.slotX, s.slotY + 8, 5);
+    }
+
+    // Position and wave the regiment flag marker
+    this.bannerContainer.setVisible(true);
+    this.bannerContainer.setPosition(Math.round(ax), Math.round(ay));
+    this.bannerContainer.setDepth(20 + ay * 0.01);
+
+    const wave = Math.sin(tSec * 7) * 2;
+    this.bannerClothGraphics.clear();
+    this.bannerClothGraphics.fillStyle(0x0284c7, 0.95);
+    this.bannerClothGraphics.fillTriangle(
+      1,
+      -29,
+      19,
+      -24 + wave,
+      1,
+      -17,
+    );
+    this.bannerClothGraphics.lineStyle(1.5, 0xfacc15, 0.95);
+    this.bannerClothGraphics.strokeTriangle(
+      1,
+      -29,
+      19,
+      -24 + wave,
+      1,
+      -17,
+    );
+  }
+
+  private drawTelegraphsAndVolleys(tSec: number): void {
+    this.telegraphGraphics.clear();
+    const snap = this.latestSnapshot;
+    if (!snap) return;
+
+    // 1. Enemy Commander Red-Circle Telegraphs
+    for (const enemy of snap.enemies) {
+      if (!enemy.alive || !enemy.telegraph) continue;
+      const t = enemy.telegraph;
+      const progress = Phaser.Math.Clamp(
+        1 - t.remainingSec / Math.max(0.01, t.totalSec),
+        0,
+        1,
+      );
+
+      // Outer danger zone
+      this.telegraphGraphics.fillStyle(0xef4444, 0.14);
+      this.telegraphGraphics.fillCircle(t.x, t.y, t.radius);
+      this.telegraphGraphics.lineStyle(2.5, 0xef4444, 0.92);
+      this.telegraphGraphics.strokeCircle(t.x, t.y, t.radius);
+
+      // Inner expanding fill circle proportional to (1 - remainingSec / totalSec)
+      const innerR = Math.max(2, t.radius * progress);
+      this.telegraphGraphics.fillStyle(0xdc2626, 0.2 + 0.28 * progress);
+      this.telegraphGraphics.fillCircle(t.x, t.y, innerR);
+      this.telegraphGraphics.lineStyle(2, 0xfca5a5, 0.75 + 0.25 * progress);
+      this.telegraphGraphics.strokeCircle(t.x, t.y, innerR);
+
+      // Perimeter visual cues for whirlwind vs cleave
+      if (t.kind === 'whirlwind') {
+        this.telegraphGraphics.lineStyle(2, 0xfef08a, 0.7);
+        for (let i = 0; i < 4; i += 1) {
+          const a = tSec * 4 + (i * Math.PI) / 2;
+          this.telegraphGraphics.beginPath();
+          this.telegraphGraphics.arc(t.x, t.y, t.radius - 4, a, a + 0.45, false);
+          this.telegraphGraphics.strokePath();
+        }
+      } else {
+        // Subtle pulsing warning cross inside cleave circle
+        const cross = Math.min(14, t.radius * 0.22);
+        this.telegraphGraphics.lineStyle(2, 0xfef08a, 0.55 + 0.35 * progress);
+        this.telegraphGraphics.beginPath();
+        this.telegraphGraphics.moveTo(t.x - cross, t.y);
+        this.telegraphGraphics.lineTo(t.x + cross, t.y);
+        this.telegraphGraphics.moveTo(t.x, t.y - cross);
+        this.telegraphGraphics.lineTo(t.x, t.y + cross);
+        this.telegraphGraphics.strokePath();
+      }
+    }
+
+    // 2. Archer Pending Volleys
+    for (const v of snap.pendingVolleys) {
+      const progress = Phaser.Math.Clamp(
+        1 - v.remainingSec / Math.max(0.01, v.totalSec),
+        0,
+        1,
+      );
+
+      // Outer emerald reticle
+      this.telegraphGraphics.fillStyle(0x10b981, 0.1);
+      this.telegraphGraphics.fillCircle(v.x, v.y, v.radius);
+      this.telegraphGraphics.lineStyle(2, 0x34d399, 0.88);
+      this.telegraphGraphics.strokeCircle(v.x, v.y, v.radius);
+
+      // Inner filling amber-emerald circle
+      const innerR = Math.max(2, v.radius * progress);
+      this.telegraphGraphics.fillStyle(0xfbbf24, 0.14 + 0.16 * progress);
+      this.telegraphGraphics.fillCircle(v.x, v.y, innerR);
+      this.telegraphGraphics.lineStyle(1.5, 0xfde68a, 0.85);
+      this.telegraphGraphics.strokeCircle(v.x, v.y, innerR);
+
+      // Reticle crosshair ticks
+      const tick = 10;
+      this.telegraphGraphics.lineStyle(2, 0x6ee7b7, 0.85);
+      this.telegraphGraphics.beginPath();
+      this.telegraphGraphics.moveTo(v.x - v.radius - 4, v.y);
+      this.telegraphGraphics.lineTo(v.x - v.radius + tick, v.y);
+      this.telegraphGraphics.moveTo(v.x + v.radius - tick, v.y);
+      this.telegraphGraphics.lineTo(v.x + v.radius + 4, v.y);
+      this.telegraphGraphics.moveTo(v.x, v.y - v.radius - 4);
+      this.telegraphGraphics.lineTo(v.x, v.y - v.radius + tick);
+      this.telegraphGraphics.moveTo(v.x, v.y + v.radius - tick);
+      this.telegraphGraphics.lineTo(v.x, v.y + v.radius + 4);
+      this.telegraphGraphics.strokePath();
     }
   }
 
@@ -565,550 +1197,406 @@ export class BattleScene extends Phaser.Scene {
 
     const w = this.arenaWidth;
     const h = this.arenaHeight;
-    const thickness = 18;
+    const thickness = 16;
 
-    this.edgePulseGraphics.fillStyle(this.edgePulseColor, this.edgePulseAlpha * 0.45);
+    this.edgePulseGraphics.fillStyle(this.edgePulseColor, this.edgePulseAlpha * 0.35);
     this.edgePulseGraphics.fillRect(0, 0, w, thickness);
     this.edgePulseGraphics.fillRect(0, h - thickness, w, thickness);
     this.edgePulseGraphics.fillRect(0, thickness, thickness, h - thickness * 2);
     this.edgePulseGraphics.fillRect(w - thickness, thickness, thickness, h - thickness * 2);
 
-    this.edgePulseGraphics.lineStyle(3, this.edgePulseColor, this.edgePulseAlpha * 0.9);
+    this.edgePulseGraphics.lineStyle(3, this.edgePulseColor, this.edgePulseAlpha * 0.85);
     this.edgePulseGraphics.strokeRect(2, 2, w - 4, h - 4);
   }
 
-  private syncHeroes(snapshot: CombatSnapshot): void {
-    const activeIds = new Set<string>();
-    const interceptMult = STANCE_MODIFIERS[snapshot.stance].tankInterceptRadiusMultiplier;
+  private drawCrosshair(tSec: number): void {
+    this.crosshairGraphics.clear();
+    if (!this.pointerInsideCanvas) return;
 
-    for (const hero of snapshot.heroes) {
-      activeIds.add(hero.id);
+    const x = Math.round(this.pointerState.x);
+    const y = Math.round(this.pointerState.y);
+    const active = this.pointerState.leftDown || this.pointerState.rightDown;
+    const color = this.pointerState.rightDown
+      ? 0xfacc15
+      : this.pointerState.leftDown
+        ? 0x38bdf8
+        : 0xe2e8f0;
+    const r = active ? 8 : 10 + Math.sin(tSec * 4) * 0.6;
+    const gap = 4;
 
-      if (hero.role === 'tank') {
-        this.targetInterceptRadius = hero.interceptRadius * interceptMult;
-      }
+    this.crosshairGraphics.lineStyle(1.5, color, active ? 0.95 : 0.65);
+    this.crosshairGraphics.strokeCircle(x, y, r);
 
-      let hv = this.heroVisuals.get(hero.id);
-      if (!hv) {
-        hv = this.createHeroVisual(hero);
-        this.heroVisuals.set(hero.id, hv);
-      }
+    this.crosshairGraphics.beginPath();
+    this.crosshairGraphics.moveTo(x - r - 4, y);
+    this.crosshairGraphics.lineTo(x - gap, y);
+    this.crosshairGraphics.moveTo(x + gap, y);
+    this.crosshairGraphics.lineTo(x + r + 4, y);
+    this.crosshairGraphics.moveTo(x, y - r - 4);
+    this.crosshairGraphics.lineTo(x, y - gap);
+    this.crosshairGraphics.moveTo(x, y + gap);
+    this.crosshairGraphics.lineTo(x, y + r + 4);
+    this.crosshairGraphics.strokePath();
 
-      // Snap immediately if teleported far (e.g. wave restart)
-      if (Math.hypot(hero.x - hv.currentX, hero.y - hv.currentY) > 160) {
-        hv.currentX = hero.x;
-        hv.currentY = hero.y;
-      }
-
-      hv.targetX = hero.x;
-      hv.targetY = hero.y;
-      hv.alive = hero.alive;
-      hv.container.setAlpha(hero.alive ? 1 : 0.28);
-      hv.sprite.setFlipX(false);
-
-      // Damage reduction golden/cyan ring
-      hv.drRing.setVisible(hero.alive && hero.damageReductionRemainingSec > 0);
-
-      this.redrawUnitBar(
-        hv.barGraphics,
-        hero.hp,
-        hero.maxHp,
-        hero.shield,
-        36,
-        -28,
-        0x22c55e,
-        false,
-      );
-    }
-
-    for (const [id, hv] of this.heroVisuals.entries()) {
-      if (!activeIds.has(id)) {
-        hv.container.destroy();
-        this.heroVisuals.delete(id);
-      }
-    }
+    this.crosshairGraphics.fillStyle(color, 0.9);
+    this.crosshairGraphics.fillRect(x - 1, y - 1, 2, 2);
   }
 
-  private createHeroVisual(hero: HeroState): HeroVisual {
-    const container = this.add.container(hero.x, hero.y).setDepth(20);
-    const shadow = this.add.ellipse(0, 14, 24, 9, 0x020617, 0.55);
-    const auraRing = this.add.circle(0, 12, 18, 0x38bdf8, 0.12);
-    auraRing.setScale(1, 0.48);
+  // ---------------------------------------------------------------------------
+  // CombatEvent VFX
+  // ---------------------------------------------------------------------------
 
-    const drRing = this.add
-      .circle(0, 0, 22, 0xfacc15, 0.08)
-      .setStrokeStyle(2, 0xfacc15, 0.75)
-      .setVisible(false);
-
-    const sprite = this.add
-      .image(0, 0, getHeroTextureKey(hero.role))
-      .setOrigin(0.5, 0.5);
-
-    const barGraphics = this.add.graphics();
-    const badge = ROLE_BADGE[hero.role];
-    const label = this.add
-      .text(0, 21, `${badge.tag} ${hero.name}`, {
-        fontFamily: '"Microsoft JhengHei", system-ui, sans-serif',
-        fontSize: '10px',
-        fontStyle: 'bold',
-        color: badge.color,
-        stroke: '#020617',
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5, 0);
-
-    container.add([shadow, auraRing, drRing, sprite, barGraphics, label]);
-
-    return {
-      id: hero.id,
-      role: hero.role,
-      container,
-      shadow,
-      auraRing,
-      sprite,
-      drRing,
-      barGraphics,
-      label,
-      targetX: hero.x,
-      targetY: hero.y,
-      currentX: hero.x,
-      currentY: hero.y,
-      bobPhase: Math.random() * Math.PI * 2,
-      hitFlashUntil: 0,
-      alive: hero.alive,
-    };
-  }
-
-  private syncEnemies(snapshot: CombatSnapshot): void {
-    for (const enemy of snapshot.enemies) {
-      if (!enemy.alive) {
-        continue;
-      }
-
-      let ev = this.enemyVisuals.get(enemy.id);
-      if (!ev) {
-        ev = this.createEnemyVisual(enemy);
-        this.enemyVisuals.set(enemy.id, ev);
-      }
-
-      ev.targetX = enemy.x;
-      ev.targetY = enemy.y;
-      ev.alive = enemy.alive;
-
-      // Show taunt mark when taunted by tank
-      ev.tauntMark.setVisible(enemy.tauntRemainingSec > 0);
-
-      const barW = enemy.isElite ? 44 : 30;
-      const barY = enemy.isElite ? -31 : -24;
-      this.redrawUnitBar(
-        ev.barGraphics,
-        enemy.hp,
-        enemy.maxHp,
-        0,
-        barW,
-        barY,
-        enemy.isElite ? 0xf59e0b : 0xef4444,
-        enemy.isElite,
-      );
-    }
-  }
-
-  private pruneDeadEnemies(snapshot: CombatSnapshot): void {
-    const aliveIds = new Set<string>();
-    for (const enemy of snapshot.enemies) {
-      if (enemy.alive) {
-        aliveIds.add(enemy.id);
-      }
-    }
-
-    for (const [id, ev] of this.enemyVisuals.entries()) {
-      if (!aliveIds.has(id)) {
-        ev.alive = false;
-        ev.container.destroy();
-        this.enemyVisuals.delete(id);
-      }
-    }
-  }
-
-  private createEnemyVisual(enemy: EnemyState): EnemyVisual {
-    const container = this.add.container(enemy.x, enemy.y).setDepth(20);
-    const shadowW = enemy.isElite ? 32 : 20;
-    const shadowY = enemy.isElite ? 17 : 12;
-    const shadow = this.add.ellipse(0, shadowY, shadowW, 8, 0x020617, 0.55);
-
-    let dangerRing: Phaser.GameObjects.Arc | null = null;
-    if (enemy.archetype === 'bomber') {
-      dangerRing = this.add
-        .circle(0, 2, 19, 0xf97316, 0.08)
-        .setStrokeStyle(1.5, 0xf97316, 0.65);
-    }
-
-    const sprite = this.add
-      .image(0, 0, getEnemyTextureKey(enemy.archetype))
-      .setOrigin(0.5, 0.5);
-
-    const barGraphics = this.add.graphics();
-
-    const tauntMark = this.add
-      .text(0, enemy.isElite ? -46 : -38, '嘲諷!', {
-        fontFamily: '"Microsoft JhengHei", system-ui, sans-serif',
-        fontSize: '9px',
-        fontStyle: 'bold',
-        color: '#38bdf8',
-        stroke: '#020617',
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5, 0.5)
-      .setVisible(false);
-
-    let eliteTag: Phaser.GameObjects.Text | null = null;
-    if (enemy.isElite) {
-      eliteTag = this.add
-        .text(0, 23, '★ 狂戰士', {
-          fontFamily: '"Microsoft JhengHei", system-ui, sans-serif',
-          fontSize: '10px',
-          fontStyle: 'bold',
-          color: '#facc15',
-          stroke: '#020617',
-          strokeThickness: 3,
-        })
-        .setOrigin(0.5, 0);
-    }
-
-    const children: Phaser.GameObjects.GameObject[] = [shadow];
-    if (dangerRing) children.push(dangerRing);
-    children.push(sprite, barGraphics, tauntMark);
-    if (eliteTag) children.push(eliteTag);
-    container.add(children);
-
-    return {
-      id: enemy.id,
-      archetype: enemy.archetype,
-      isElite: enemy.isElite,
-      container,
-      shadow,
-      dangerRing,
-      sprite,
-      barGraphics,
-      tauntMark,
-      eliteTag,
-      targetX: enemy.x,
-      targetY: enemy.y,
-      currentX: enemy.x,
-      currentY: enemy.y,
-      bobPhase: Math.random() * Math.PI * 2,
-      hitFlashUntil: 0,
-      alive: true,
-    };
-  }
-
-  private redrawUnitBar(
-    g: Phaser.GameObjects.Graphics,
-    hp: number,
-    maxHp: number,
-    shield: number,
-    width: number,
-    offsetY: number,
-    hpColor: number,
-    isElite: boolean,
-  ): void {
-    g.clear();
-    const x = -Math.round(width / 2);
-    const height = isElite ? 6 : 5;
-    const hpRatio = maxHp > 0 ? Phaser.Math.Clamp(hp / maxHp, 0, 1) : 0;
-
-    // Frame
-    g.fillStyle(isElite ? 0xfacc15 : 0x020617, 0.92);
-    g.fillRect(x - 1, offsetY - 1, width + 2, height + 2);
-
-    // Background
-    g.fillStyle(0x1e293b, 1);
-    g.fillRect(x, offsetY, width, height);
-
-    // HP fill
-    if (hpRatio > 0) {
-      g.fillStyle(hpColor, 1);
-      g.fillRect(x, offsetY, Math.max(1, Math.round(width * hpRatio)), height);
-    }
-
-    // Cyan shield bar overlay (drawn along top & right edge of bar)
-    if (shield > 0 && maxHp > 0) {
-      const shieldRatio = Phaser.Math.Clamp(shield / maxHp, 0, 1);
-      const shieldW = Math.max(2, Math.round(width * shieldRatio));
-      g.fillStyle(0x38bdf8, 0.95);
-      g.fillRect(x, offsetY - 2, shieldW, 2);
-      g.fillStyle(0x7dd3fc, 0.6);
-      g.fillRect(x, offsetY, shieldW, 1);
-    }
-  }
-
-  private handleCombatEvent(event: CombatEvent): void {
-    switch (event.type) {
+  private handleCombatEvent(evt: CombatEvent): void {
+    switch (evt.type) {
+      case 'hero_slash':
+        this.playHeroSlash(evt.x, evt.y, evt.angle, evt.radius, evt.arcRad, evt.comboStep);
+        break;
+      case 'hero_charge':
+        this.playHeroCharge(evt.fromX, evt.fromY, evt.toX, evt.toY);
+        break;
+      case 'hero_warcry':
+        this.playHeroWarcry(evt.x, evt.y, evt.radius);
+        break;
+      case 'hero_dodge':
+        this.playHeroDodge(evt.x, evt.y, evt.angle);
+        break;
+      case 'hero_down':
+        this.playExpandingRing(evt.x, evt.y, 44, 0xef4444, 380);
+        this.spawnFloatingText(evt.x, evt.y - 26, '主將重傷!', '#f87171', 15);
+        this.cameras.main.shake(180, 0.005);
+        break;
+      case 'hero_respawn':
+        this.playExpandingRing(evt.x, evt.y, 52, 0xfacc15, 420);
+        this.spawnFloatingText(evt.x, evt.y - 28, '主將歸陣!', '#fde047', 15);
+        break;
+      case 'regiment_command':
+        this.playRegimentCommand(evt.x, evt.y, evt.label, evt.commandType, evt.order);
+        break;
+      case 'arrow_shot':
+        this.playArrowShot(evt.fromX, evt.fromY, evt.toX, evt.toY, evt.isPlayerSide);
+        break;
+      case 'volley_impact':
+        this.playVolleyImpact(evt.x, evt.y, evt.radius);
+        break;
+      case 'commander_slam':
+        this.playCommanderSlam(evt.x, evt.y, evt.radius);
+        break;
       case 'damage':
-        this.playDamageVfx(event);
-        break;
-      case 'heal':
-        this.playHealVfx(event);
-        break;
-      case 'shield':
-        this.playShieldVfx(event);
-        break;
-      case 'skill_cast':
-        this.playSkillCastVfx(event);
-        break;
-      case 'stance_changed':
-        this.playStanceChangedVfx(event.nextStance);
+        this.playDamageFeedback(
+          evt.x,
+          evt.y,
+          evt.amount,
+          evt.isCrit,
+          evt.targetTeam,
+          evt.blocked,
+        );
         break;
       case 'gate_hit':
-        this.playGateHitVfx(event);
-        break;
-      case 'enemy_spawned':
-        this.playSpawnRing(event.x, event.y, event.isElite ? 0xfacc15 : 0xc084fc);
+        this.playGateHit(evt.x, evt.y, evt.amount);
         break;
       case 'unit_died':
-        this.playUnitDiedVfx(event);
+        this.playUnitDied(evt.x, evt.y, evt.team, evt.isCommander);
         break;
       case 'combat_ended':
-        this.edgePulseColor = event.status === 'victory' ? 0x34d399 : 0xef4444;
-        this.edgePulseAlpha = 0.85;
-        this.drawEdgePulse();
+        this.triggerEdgePulse(evt.status === 'victory' ? 0xfacc15 : 0xef4444, 0.75);
         break;
     }
   }
 
-  private getUnitPosition(unitId: string): { x: number; y: number } | null {
-    const hv = this.heroVisuals.get(unitId);
-    if (hv) return { x: hv.currentX, y: hv.currentY };
-    const ev = this.enemyVisuals.get(unitId);
-    if (ev) return { x: ev.currentX, y: ev.currentY };
-    return null;
-  }
-
-  private playDamageVfx(event: Extract<CombatEvent, { type: 'damage' }>): void {
-    const now = this.time.now;
-
-    // 1. Hit flash on target
-    if (event.targetTeam === 'hero') {
-      const hv = this.heroVisuals.get(event.targetId);
-      if (hv) {
-        hv.sprite.setTintFill(event.shieldAbsorbed > 0 && event.amount === 0 ? 0x38bdf8 : 0xf87171);
-        hv.hitFlashUntil = now + 95;
-      }
-    } else {
-      const ev = this.enemyVisuals.get(event.targetId);
-      if (ev) {
-        ev.sprite.setTintFill(event.isCrit ? 0xfef08a : 0xffffff);
-        ev.hitFlashUntil = now + 90;
-      }
-    }
-
-    // 2. Projectile / slash line from source to target
-    const src = this.getUnitPosition(event.sourceId);
-    if (src) {
-      const dist = Math.hypot(event.x - src.x, event.y - src.y);
-      const isRanged = dist > 85;
-      const lineColor =
-        event.sourceTeam === 'hero'
-          ? event.isCrit
-            ? 0xfacc15
-            : 0xbae6fd
-          : 0xfb7185;
-      this.drawAttackTrace(src.x, src.y, event.x, event.y, lineColor, isRanged);
-    }
-
-    // 3. AOE blast ring for explosive/AOE enemy hits
-    if (event.isAoe && event.sourceTeam === 'enemy') {
-      this.spawnExpandingRing(event.x, event.y, 48, 0xf97316, 0.55, 280);
-    }
-
-    // 4. Floating damage number
-    const totalShown = Math.max(0, Math.round(event.amount));
-    const jitterX = (Math.random() - 0.5) * 14;
-    if (totalShown > 0) {
-      const text = event.isCrit ? `${totalShown}!` : `${totalShown}`;
-      const color =
-        event.targetTeam === 'hero'
-          ? '#f87171'
-          : event.isCrit
-            ? '#fde047'
-            : '#f8fafc';
-      const fontSize = event.isCrit ? '15px' : '12px';
-      this.spawnFloatingText(event.x + jitterX, event.y - 22, text, color, fontSize);
-    } else if (event.shieldAbsorbed > 0) {
-      this.spawnFloatingText(
-        event.x + jitterX,
-        event.y - 22,
-        `盾 -${Math.round(event.shieldAbsorbed)}`,
-        '#38bdf8',
-        '11px',
-      );
-    }
-  }
-
-  private drawAttackTrace(
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number,
-    color: number,
-    isRanged: boolean,
+  private playHeroSlash(
+    x: number,
+    y: number,
+    angle: number,
+    radius: number,
+    arcRad: number,
+    comboStep: 0 | 1 | 2,
   ): void {
-    const g = this.add.graphics().setDepth(40);
-    if (isRanged) {
-      g.lineStyle(2, color, 0.85);
-      g.beginPath();
-      g.moveTo(x1, y1 - 4);
-      g.lineTo(x2, y2 - 4);
-      g.strokePath();
-      g.fillStyle(0xffffff, 0.95);
-      g.fillRect(x2 - 2, y2 - 6, 4, 4);
-    } else {
-      // Crisp melee slash arc near target
-      const angle = Math.atan2(y2 - y1, x2 - x1);
-      g.lineStyle(2.5, color, 0.9);
-      g.beginPath();
-      g.arc(x2, y2, 16, angle - 0.9, angle + 0.9, false);
-      g.strokePath();
-    }
+    const isFinisher = comboStep === 2;
+    const outerColor = isFinisher ? 0xfacc15 : 0x38bdf8;
+    const innerColor = isFinisher ? 0xfef08a : 0xe0f2fe;
+    const halfArc = arcRad / 2;
+
+    const g = this.add.graphics().setDepth(45);
+    g.setPosition(x, y);
+
+    // Outer glowing crescent
+    g.lineStyle(isFinisher ? 11 : 7, outerColor, 0.82);
+    g.beginPath();
+    g.arc(0, 0, radius * 0.84, angle - halfArc, angle + halfArc, false);
+    g.strokePath();
+
+    // Crisp bright inner edge
+    g.lineStyle(isFinisher ? 4 : 3, innerColor, 0.98);
+    g.beginPath();
+    g.arc(0, 0, radius * 0.92, angle - halfArc * 0.9, angle + halfArc * 0.9, false);
+    g.strokePath();
+
+    // Subtle translucent sweep fill
+    g.fillStyle(outerColor, isFinisher ? 0.22 : 0.14);
+    g.beginPath();
+    g.moveTo(0, 0);
+    g.arc(0, 0, radius * 0.9, angle - halfArc, angle + halfArc, false);
+    g.closePath();
+    g.fillPath();
 
     this.tweens.add({
       targets: g,
       alpha: 0,
-      duration: isRanged ? 150 : 120,
+      scaleX: isFinisher ? 1.15 : 1.07,
+      scaleY: isFinisher ? 1.15 : 1.07,
+      duration: isFinisher ? 220 : 165,
+      ease: 'Cubic.easeOut',
       onComplete: () => g.destroy(),
     });
-  }
 
-  private playHealVfx(event: Extract<CombatEvent, { type: 'heal' }>): void {
-    const amount = Math.round(event.amount);
-    if (amount > 0) {
-      this.spawnFloatingText(event.x, event.y - 26, `+${amount}`, '#4ade80', '13px');
-    }
-    this.spawnExpandingRing(event.x, event.y, 26, 0x4ade80, 0.65, 340);
-
-    // Rising pixel sparkles
-    for (let i = 0; i < 4; i += 1) {
-      const px = this.add
-        .image(
-          event.x + (Math.random() - 0.5) * 20,
-          event.y + (Math.random() - 0.5) * 10,
-          'px-square',
-        )
-        .setTint(0x86efac)
-        .setDepth(42);
-      this.tweens.add({
-        targets: px,
-        y: px.y - 24 - Math.random() * 12,
-        alpha: 0,
-        duration: 420,
-        ease: 'Quad.easeOut',
-        onComplete: () => px.destroy(),
-      });
+    if (isFinisher) {
+      this.spawnPixelBurst(
+        x + Math.cos(angle) * radius * 0.75,
+        y + Math.sin(angle) * radius * 0.75,
+        0xfacc15,
+        8,
+        80,
+      );
     }
   }
 
-  private playShieldVfx(event: Extract<CombatEvent, { type: 'shield' }>): void {
-    this.spawnExpandingRing(event.x, event.y, 32, 0x38bdf8, 0.75, 360);
-    const amount = Math.round(event.amount);
-    if (amount > 0) {
-      this.spawnFloatingText(event.x, event.y - 30, `+${amount} 盾`, '#38bdf8', '11px');
-    }
-  }
+  private playHeroCharge(fromX: number, fromY: number, toX: number, toY: number): void {
+    const g = this.add.graphics().setDepth(44);
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+    const perpX = -Math.sin(angle) * 10;
+    const perpY = Math.cos(angle) * 10;
 
-  private playSkillCastVfx(event: Extract<CombatEvent, { type: 'skill_cast' }>): void {
-    const hv = this.heroVisuals.get(event.heroId);
-    const roleColor = hv ? ROLE_BADGE[hv.role].hex : 0xfacc15;
-    const roleTextColor = hv ? ROLE_BADGE[hv.role].color : '#fde047';
+    // Bold golden-cyan central dash beam
+    g.lineStyle(12, 0x38bdf8, 0.55);
+    g.beginPath();
+    g.moveTo(fromX, fromY);
+    g.lineTo(toX, toY);
+    g.strokePath();
 
-    // Floating skill name banner above casting hero
-    const banner = this.add
-      .text(event.x, event.y - 42, `✦ ${event.skillName}`, {
-        fontFamily: '"Microsoft JhengHei", system-ui, sans-serif',
-        fontSize: '12px',
-        fontStyle: 'bold',
-        color: roleTextColor,
-        backgroundColor: '#020617cc',
-        padding: { x: 6, y: 2 },
-        stroke: '#020617',
-        strokeThickness: 2,
-      })
-      .setOrigin(0.5)
-      .setDepth(52);
+    g.lineStyle(5, 0xfacc15, 0.92);
+    g.beginPath();
+    g.moveTo(fromX, fromY);
+    g.lineTo(toX, toY);
+    g.strokePath();
+
+    // Flanking speed lines
+    g.lineStyle(2, 0xe0f2fe, 0.7);
+    g.beginPath();
+    g.moveTo(fromX + perpX, fromY + perpY);
+    g.lineTo(toX + perpX * 0.6, toY + perpY * 0.6);
+    g.moveTo(fromX - perpX, fromY - perpY);
+    g.lineTo(toX - perpX * 0.6, toY - perpY * 0.6);
+    g.strokePath();
 
     this.tweens.add({
-      targets: banner,
-      y: banner.y - 18,
+      targets: g,
       alpha: 0,
-      duration: 950,
-      ease: 'Cubic.easeOut',
-      onComplete: () => banner.destroy(),
+      duration: 280,
+      ease: 'Quad.easeOut',
+      onComplete: () => g.destroy(),
     });
 
-    // Expanding AOE / Taunt tactical circle if radius is present
-    if (event.radius && event.radius > 0) {
-      const cx = event.targetX ?? event.x;
-      const cy = event.targetY ?? event.y;
-      this.spawnExpandingRing(cx, cy, event.radius, roleColor, 0.65, 480);
-    }
+    this.playExpandingRing(toX, toY, 44, 0xfacc15, 260);
+    this.spawnPixelBurst(toX, toY, 0x38bdf8, 10, 95);
+    this.cameras.main.shake(100, 0.0025);
   }
 
-  private playStanceChangedVfx(nextStance: TacticalStance): void {
-    const style = STANCE_VISUALS[nextStance];
+  private playHeroWarcry(x: number, y: number, radius: number): void {
+    this.playExpandingRing(x, y, radius, 0xfacc15, 440, 4);
+    this.playExpandingRing(x, y, radius * 0.68, 0xfef08a, 340, 2.5);
+    this.spawnPixelBurst(x, y, 0xfacc15, 14, 120);
+    this.triggerEdgePulse(0xfacc15, 0.55);
+  }
 
-    // Screen-edge tint pulse
-    this.edgePulseColor = style.color;
-    this.edgePulseAlpha = 0.85;
-    this.drawEdgePulse();
+  private playHeroDodge(x: number, y: number, angle: number): void {
+    this.playExpandingRing(x, y, 26, 0x38bdf8, 200, 2.5);
+    this.spawnPixelBurst(
+      x - Math.cos(angle) * 8,
+      y - Math.sin(angle) * 8,
+      0x7dd3fc,
+      6,
+      55,
+    );
+  }
 
-    // Banner text pop
-    this.stanceBannerText.setText(style.banner);
-    this.stanceBannerText.setColor(style.hex);
+  private playRegimentCommand(
+    x: number,
+    y: number,
+    label: string,
+    commandType: 'order' | 'formation' | 'skill',
+    order?: RegimentOrder,
+  ): void {
+    const color =
+      commandType === 'skill'
+        ? 0xfacc15
+        : order
+          ? ORDER_PING_COLOR[order]
+          : 0x38bdf8;
+    const hexStr = `#${color.toString(16).padStart(6, '0')}`;
 
-    const padX = 18;
-    const padY = 8;
-    const bw = Math.max(170, this.stanceBannerText.width + padX * 2);
-    const bh = this.stanceBannerText.height + padY * 2;
+    this.playExpandingRing(x, y, commandType === 'skill' ? 54 : 38, color, 380, 2.5);
+    this.spawnFloatingText(x, y - 16, label, hexStr, commandType === 'skill' ? 14 : 12);
+  }
 
-    this.stanceBannerBg.clear();
-    this.stanceBannerBg.fillStyle(0x020617, 0.85);
-    this.stanceBannerBg.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
-    this.stanceBannerBg.lineStyle(2, style.color, 0.9);
-    this.stanceBannerBg.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
+  private playArrowShot(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    isPlayerSide: boolean,
+  ): void {
+    const color = isPlayerSide ? 0x34d399 : 0xc084fc;
+    const tipColor = isPlayerSide ? 0xfef08a : 0xf5d0fe;
 
-    if (this.stanceBannerTween) {
-      this.stanceBannerTween.stop();
-      this.stanceBannerTween = null;
-    }
+    const line = this.add.graphics().setDepth(42);
+    line.lineStyle(2, color, 0.78);
+    line.beginPath();
+    line.moveTo(fromX, fromY);
+    line.lineTo(toX, toY);
+    line.strokePath();
 
-    this.stanceBannerContainer.setPosition(this.arenaWidth / 2, 54);
-    this.stanceBannerContainer.setAlpha(1);
-    this.stanceBannerContainer.setScale(0.92);
-
-    this.stanceBannerTween = this.tweens.add({
-      targets: this.stanceBannerContainer,
-      scaleX: 1,
-      scaleY: 1,
+    this.tweens.add({
+      targets: line,
+      alpha: 0,
       duration: 140,
-      ease: 'Back.easeOut',
-      onComplete: () => {
-        this.stanceBannerTween = this.tweens.add({
-          targets: this.stanceBannerContainer,
-          alpha: 0,
-          y: 44,
-          delay: 750,
-          duration: 380,
-          ease: 'Quad.easeIn',
-        });
-      },
+      onComplete: () => line.destroy(),
+    });
+
+    const arrowTip = this.add.rectangle(fromX, fromY, 8, 2, tipColor, 1).setDepth(43);
+    arrowTip.setRotation(Math.atan2(toY - fromY, toX - fromX));
+
+    this.tweens.add({
+      targets: arrowTip,
+      x: toX,
+      y: toY,
+      duration: 110,
+      ease: 'Linear',
+      onComplete: () => arrowTip.destroy(),
     });
   }
 
-  private playGateHitVfx(event: Extract<CombatEvent, { type: 'gate_hit' }>): void {
-    // Camera micro-shake
-    this.cameras.main.shake(150, 0.006);
+  private playVolleyImpact(x: number, y: number, radius: number): void {
+    // Burst of falling arrows converging into target zone
+    const arrowCount = 10;
+    for (let i = 0; i < arrowCount; i += 1) {
+      const a = (i / arrowCount) * Math.PI * 2 + Math.random() * 0.5;
+      const dist = Math.random() * radius * 0.85;
+      const tx = x + Math.cos(a) * dist;
+      const ty = y + Math.sin(a) * dist;
+      const sx = tx - 28;
+      const sy = ty - 68;
 
-    // Red flash on village gate
-    this.gateDamageFlash.setAlpha(0.52);
+      const streak = this.add.graphics().setDepth(44);
+      streak.lineStyle(2, 0x34d399, 0.9);
+      streak.beginPath();
+      streak.moveTo(sx, sy);
+      streak.lineTo(tx, ty);
+      streak.strokePath();
+
+      this.tweens.add({
+        targets: streak,
+        alpha: 0,
+        duration: 210 + Math.random() * 80,
+        onComplete: () => streak.destroy(),
+      });
+    }
+
+    // Impact dust & emerald-amber ring
+    this.playExpandingRing(x, y, radius, 0xfbbf24, 320, 3);
+    this.playExpandingRing(x, y, radius * 0.65, 0x34d399, 260, 2);
+    this.spawnPixelBurst(x, y, 0xfde68a, 12, 90);
+  }
+
+  private playCommanderSlam(x: number, y: number, radius: number): void {
+    // Dramatic crimson shockwave + inner flash
+    const flash = this.add.circle(x, y, radius * 0.85, 0xef4444, 0.38).setDepth(43);
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      scaleX: 1.15,
+      scaleY: 1.15,
+      duration: 280,
+      ease: 'Quad.easeOut',
+      onComplete: () => flash.destroy(),
+    });
+
+    this.playExpandingRing(x, y, radius, 0xef4444, 380, 4.5);
+    this.playExpandingRing(x, y, radius * 0.72, 0xf97316, 300, 3);
+    this.spawnPixelBurst(x, y, 0xef4444, 18, 130);
+    this.triggerEdgePulse(0xef4444, 0.55);
+    this.cameras.main.shake(220, 0.007);
+  }
+
+  private playDamageFeedback(
+    x: number,
+    y: number,
+    amount: number,
+    isCrit: boolean,
+    targetTeam: 'player' | 'enemy',
+    blocked?: boolean,
+  ): void {
+    const rounded = Math.max(0, Math.round(amount));
+    const jitterX = (Math.random() - 0.5) * 14;
+    let text: string;
+    let color: string;
+    let size: number;
+
+    if (blocked) {
+      text = rounded > 0 ? `格擋 ${rounded}` : '格擋';
+      color = '#38bdf8';
+      size = 11;
+    } else if (isCrit) {
+      text = `${rounded}!`;
+      color = '#facc15';
+      size = 16;
+    } else if (targetTeam === 'player') {
+      text = `-${rounded}`;
+      color = '#f87171';
+      size = 12;
+    } else {
+      text = `${rounded}`;
+      color = '#f8fafc';
+      size = 12;
+    }
+
+    this.spawnFloatingText(x + jitterX, y - 18, text, color, size, isCrit);
+
+    // Subtle hit flash on nearby unit
+    this.flashUnitNear(x, y, targetTeam);
+  }
+
+  private flashUnitNear(x: number, y: number, targetTeam: 'player' | 'enemy'): void {
+    const now = this.time.now;
+    const flashUntil = now + 95;
+
+    if (targetTeam === 'player') {
+      if (this.heroVisual && Math.hypot(this.heroVisual.currentX - x, this.heroVisual.currentY - y) < 26) {
+        this.heroVisual.sprite.setTint(0xfca5a5);
+        this.heroVisual.hitFlashUntil = flashUntil;
+        return;
+      }
+      for (const sv of this.soldierVisuals.values()) {
+        if (Math.hypot(sv.currentX - x, sv.currentY - y) < 20) {
+          sv.sprite.setTint(0xfca5a5);
+          sv.hitFlashUntil = flashUntil;
+          return;
+        }
+      }
+    } else {
+      for (const ev of this.enemyVisuals.values()) {
+        const hitR = ev.isCommander ? 36 : 22;
+        if (Math.hypot(ev.currentX - x, ev.currentY - y) < hitR) {
+          ev.sprite.setTintFill(0xffffff);
+          ev.hitFlashUntil = flashUntil;
+          return;
+        }
+      }
+    }
+  }
+
+  private playGateHit(x: number, y: number, amount: number): void {
+    this.gateDamageFlash.setAlpha(0.5);
+    this.tweens.killTweensOf(this.gateDamageFlash);
     this.tweens.add({
       targets: this.gateDamageFlash,
       alpha: 0,
@@ -1116,70 +1604,67 @@ export class BattleScene extends Phaser.Scene {
       ease: 'Quad.easeOut',
     });
 
-    // Floating -DMG on gate
-    const hitY = Phaser.Math.Clamp(event.y, 70, this.arenaHeight - 70);
+    this.cameras.main.shake(110, 0.0035);
     this.spawnFloatingText(
-      this.gateX - 10,
-      hitY,
-      `-${Math.round(event.amount)}`,
+      Math.max(this.gateX + 12, x),
+      y - 12,
+      `-${Math.round(amount)}`,
       '#ef4444',
-      '16px',
+      14,
     );
+    this.spawnPixelBurst(this.gateX, y, 0xf97316, 7, 70);
   }
 
-  private playUnitDiedVfx(event: Extract<CombatEvent, { type: 'unit_died' }>): void {
-    let burstColor = event.team === 'hero' ? 0x38bdf8 : 0xef4444;
-    if (event.team === 'enemy') {
-      const ev = this.enemyVisuals.get(event.unitId);
-      if (ev) {
-        burstColor = ENEMY_TINT_BURST[ev.archetype];
+  private playUnitDied(
+    x: number,
+    y: number,
+    team: 'hero' | 'regiment' | 'enemy',
+    isCommander?: boolean,
+  ): void {
+    if (isCommander) {
+      this.spawnPixelBurst(x, y, 0xfacc15, 24, 150);
+      this.spawnPixelBurst(x, y, 0xef4444, 18, 120);
+      this.playExpandingRing(x, y, 76, 0xfacc15, 450, 4);
+      this.cameras.main.shake(260, 0.008);
+      return;
+    }
+
+    let color = 0xef4444;
+    if (team === 'hero') {
+      color = 0xfacc15;
+    } else if (team === 'regiment') {
+      color = 0x38bdf8;
+    } else {
+      // Match nearest enemy color if still present
+      for (const ev of this.enemyVisuals.values()) {
+        if (Math.hypot(ev.currentX - x, ev.currentY - y) < 36) {
+          color = ENEMY_BURST_COLOR[ev.type] ?? 0xef4444;
+          break;
+        }
       }
     }
 
-    // Pixel burst particles
-    const count = 10;
-    for (let i = 0; i < count; i += 1) {
-      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.4;
-      const speed = 22 + Math.random() * 34;
-      const px = this.add
-        .image(event.x, event.y, 'px-square')
-        .setTint(i % 2 === 0 ? burstColor : 0xf8fafc)
-        .setScale(1.1)
-        .setDepth(45);
-
-      this.tweens.add({
-        targets: px,
-        x: event.x + Math.cos(angle) * speed,
-        y: event.y + Math.sin(angle) * speed + 10,
-        alpha: 0,
-        scaleX: 0.3,
-        scaleY: 0.3,
-        duration: 360 + Math.random() * 140,
-        ease: 'Quad.easeOut',
-        onComplete: () => px.destroy(),
-      });
-    }
+    this.spawnPixelBurst(x, y, color, 10, 85);
   }
 
-  private playSpawnRing(x: number, y: number, color: number): void {
-    this.spawnExpandingRing(x, y, 28, color, 0.7, 320);
-  }
+  // ---------------------------------------------------------------------------
+  // VFX Helpers
+  // ---------------------------------------------------------------------------
 
-  private spawnExpandingRing(
+  private playExpandingRing(
     x: number,
     y: number,
-    maxRadius: number,
+    targetRadius: number,
     color: number,
-    startAlpha: number,
     duration: number,
+    strokeWidth = 3,
   ): void {
     const ring = this.add
-      .circle(x, y, Math.max(8, maxRadius * 0.25), color, startAlpha * 0.2)
-      .setStrokeStyle(2, color, startAlpha)
-      .setDepth(41);
+      .circle(x, y, 8, color, 0.14)
+      .setStrokeStyle(strokeWidth, color, 0.92)
+      .setDepth(42);
 
-    const targetScale = maxRadius / Math.max(8, maxRadius * 0.25);
-
+    const targetScale = Math.max(1.2, targetRadius / 8);
     this.tweens.add({
       targets: ring,
       scaleX: targetScale,
@@ -1194,41 +1679,72 @@ export class BattleScene extends Phaser.Scene {
   private spawnFloatingText(
     x: number,
     y: number,
-    content: string,
+    label: string,
     color: string,
-    fontSize: string,
+    fontSize: number,
+    pop = false,
   ): void {
     const txt = this.add
-      .text(Math.round(x), Math.round(y), content, {
-        fontFamily: 'monospace, "Microsoft JhengHei", sans-serif',
-        fontSize,
+      .text(Math.round(x), Math.round(y), label, {
+        fontFamily: '"Microsoft JhengHei", system-ui, monospace, sans-serif',
+        fontSize: `${fontSize}px`,
         fontStyle: 'bold',
         color,
         stroke: '#020617',
         strokeThickness: 3,
       })
       .setOrigin(0.5)
-      .setDepth(50);
+      .setDepth(55);
+
+    if (pop) {
+      txt.setScale(1.3);
+    }
 
     this.tweens.add({
       targets: txt,
-      y: txt.y - 26,
+      y: y - (pop ? 34 : 24),
+      scaleX: 1,
+      scaleY: 1,
       alpha: 0,
-      duration: 680,
+      duration: pop ? 720 : 560,
       ease: 'Cubic.easeOut',
       onComplete: () => txt.destroy(),
     });
   }
 
-  private clearAllUnits(): void {
-    for (const hv of this.heroVisuals.values()) {
-      hv.container.destroy();
-    }
-    this.heroVisuals.clear();
+  private spawnPixelBurst(
+    x: number,
+    y: number,
+    color: number,
+    count: number,
+    maxDist: number,
+  ): void {
+    for (let i = 0; i < count; i += 1) {
+      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.5;
+      const dist = 14 + Math.random() * maxDist;
+      const p = this.add
+        .image(x, y, 'px-square')
+        .setTint(color)
+        .setScale(0.8 + Math.random() * 0.9)
+        .setDepth(48);
 
-    for (const ev of this.enemyVisuals.values()) {
-      ev.container.destroy();
+      this.tweens.add({
+        targets: p,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist,
+        alpha: 0,
+        scaleX: 0.2,
+        scaleY: 0.2,
+        duration: 240 + Math.random() * 200,
+        ease: 'Quad.easeOut',
+        onComplete: () => p.destroy(),
+      });
     }
-    this.enemyVisuals.clear();
+  }
+
+  private triggerEdgePulse(color: number, alpha: number): void {
+    this.edgePulseColor = color;
+    this.edgePulseAlpha = Math.max(this.edgePulseAlpha, alpha);
+    this.drawEdgePulse();
   }
 }

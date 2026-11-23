@@ -1,7 +1,17 @@
 import Phaser from 'phaser';
-import type { EnemyArchetype, SquadRole } from '../core/types/combat';
+import type { EnemyUnitType, RegimentType } from '../core/types/combat';
 
 type Palette = Record<string, number>;
+
+export const HERO_TEXTURE_KEY = 'hero-commander';
+
+export function getSoldierTextureKey(type: RegimentType): string {
+  return `soldier-${type}`;
+}
+
+export function getEnemyTextureKey(type: EnemyUnitType): string {
+  return `enemy-${type}`;
+}
 
 /**
  * Draws an ASCII pixel grid onto a Phaser Graphics object and bakes it into a crisp texture.
@@ -38,178 +48,215 @@ function bakePixelGrid(
   graphics.destroy();
 }
 
-export function getHeroTextureKey(role: SquadRole): string {
-  return `sprite-hero-${role}`;
-}
-
-export function getEnemyTextureKey(archetype: EnemyArchetype): string {
-  return `sprite-enemy-${archetype}`;
-}
-
 export function generateBattleTextures(scene: Phaser.Scene): void {
-  // 1. Hero Tank — 艾莉絲 (Cyan/Gold Paladin Knight with Kite Shield & Sword) — 18x18 * 2 = 36x36
+  // 1. Player Hero — Valkyrie Knight Commander (18x18 * 2 = 36x36), facing right
+  // Armored valkyrie knight with flowing crimson-gold cape, winged golden crest, kite shield & spear
   bakePixelGrid(
     scene,
-    getHeroTextureKey('tank'),
+    HERO_TEXTURE_KEY,
     [
-      '......GGGG........',
-      '.....GCCCCG.......',
-      '....GCCCCCCGG.....',
-      '....GCKKKKCG......',
-      '....GCSWWSG....S..',
-      '...BBGCCCCGB..SS..',
-      '..BBBBGGGGGBB.SG..',
-      '..BGGCCCCGGBBGG...',
-      '..BGCCGGCCGGGB....',
-      '..BGGCCCCGGBG.....',
-      '..BBGCCCCGGB......',
-      '..BBBGGGGGB.......',
-      '...BBBCCBB........',
-      '....BCCCCB........',
-      '....BC..CB........',
-      '...GGC..CGG.......',
-      '...DD....DD.......',
+      '....G..GG..G......',
+      '.....GGGGGG.......',
+      '....GGSSSSGG......',
+      '....GSKKKKSS......',
+      '....GSSWWSSG....P.',
+      '...RRGSSSSG....PP.',
+      '..RRRRGGGGGB..PPL.',
+      '..RRGGCCCCGGBBPL..',
+      '..RRGCGGGGCCBBP...',
+      '..RRGGCCCCGGBB....',
+      '..RRRGGGGGGGBB....',
+      '..RRR.CCCC.GB.....',
+      '...RR.CCCC........',
+      '...R..CC.C........',
+      '.....GGC.CG.......',
+      '.....DD..DD.......',
+      '..................',
       '..................',
     ],
     {
-      G: 0xfacc15, // gold trim
-      C: 0x38bdf8, // cyan armor
-      K: 0x0f172a, // helmet visor dark
-      S: 0xe2e8f0, // steel / skin highlight
-      W: 0xbae6fd, // bright cyan glint
-      B: 0x0284c7, // deep azure cape / shield body
-      D: 0x1e293b, // dark iron boots
+      G: 0xfacc15, // golden crest & trim
+      S: 0xe2e8f0, // silver-steel helm & plates
+      K: 0x0f172a, // helmet visor
+      W: 0x38bdf8, // valkyrie eye glint
+      R: 0xdc2626, // flowing commander cape
+      C: 0x0ea5e9, // azure knight cuirass
+      B: 0x1d4ed8, // kite shield body
+      P: 0xf8fafc, // spearhead tip
+      L: 0x94a3b8, // spear shaft
+      D: 0x1e293b, // armored boots
     },
     2,
   );
 
-  // 2. Hero DPS — 莉娜 (Emerald/Amber Ranger with Hood & Bow) — 18x18 * 2 = 36x36
+  // 2. Friendly Soldier: Shieldmen — steel-blue kite shield + helmet (12x12 * 2 = 24x24), facing right
   bakePixelGrid(
     scene,
-    getHeroTextureKey('dps'),
+    getSoldierTextureKey('shieldmen'),
     [
-      '......EEEE........',
-      '.....EEEEEE.......',
-      '....EEFFFFEE......',
-      '....EFKFFKFE..A...',
-      '....EFFFFFFE...A..',
-      '.....AAAAAA....AA.',
-      '....EAAAAEEE..W.A.',
-      '...EEGGGGEEEEW..A.',
-      '...EGGAAAGGEW...A.',
-      '...EEGAAAGGEW...A.',
-      '....EGGGGGEEW..A..',
-      '....EEGGGEEE..AA..',
-      '.....EBBBE...A....',
-      '.....EB.BE........',
-      '....EEB.BEE.......',
-      '....DD...DD.......',
-      '..................',
-      '..................',
+      '....SSSS....',
+      '...SSSSSS...',
+      '...SKKKKS...',
+      '....SSSS....',
+      '...BBCCGGG..',
+      '..BBBCCGBBG.',
+      '..BBCCCGBBG.',
+      '..BBCCCGBBG.',
+      '...BCCCGGG..',
+      '....CC.C....',
+      '...DD..DD...',
+      '............',
     ],
     {
-      E: 0x10b981, // emerald cloak
-      G: 0x047857, // dark emerald tunic
-      A: 0xf59e0b, // amber scarf & bow wood
-      F: 0xfde68a, // face skin
-      K: 0x0f172a, // eyes
-      W: 0xfef3c7, // bowstring / arrow tip
-      B: 0x334155, // leather leggings
+      S: 0x94a3b8, // steel helmet
+      K: 0x0f172a, // visor
+      C: 0x38bdf8, // steel-blue surcoat
+      B: 0x1d4ed8, // deep blue armor & kite shield face
+      G: 0xe2e8f0, // kite shield rim
       D: 0x1e293b, // boots
     },
     2,
   );
 
-  // 3. Hero Support — 米婭 (Violet/White Cleric with Star Staff & Halo) — 18x18 * 2 = 36x36
+  // 3. Friendly Soldier: Pikemen — teal/silver armor + long pike protruding forward (12x12 * 2 = 24x24)
   bakePixelGrid(
     scene,
-    getHeroTextureKey('support'),
+    getSoldierTextureKey('pikemen'),
     [
-      '.....YYYYYY.......',
-      '....Y......Y..Y...',
-      '.....VVVVVV..YYY..',
-      '....VVFFFFVV..Y...',
-      '....VFKFFKFV..S...',
-      '....VVFFFFVV..S...',
-      '.....VVGGVV...S...',
-      '....WWWWWWWW..S...',
-      '...WWVVGGVVWW.S...',
-      '...WWVVVVVVWW.S...',
-      '...WWWVVVVWWW.S...',
-      '....WWWWWWWW..S...',
-      '...WWVVWWVVWW.S...',
-      '...WWWWWWWWWW.S...',
-      '....WW....WW......',
-      '....VV....VV......',
-      '..................',
-      '..................',
+      '...SSSS.....',
+      '..SSSSSS....',
+      '..SKKKKS....',
+      '...TTTT.....',
+      '..TTTTTT..PP',
+      '..TTGGTTLLPP',
+      '.TTTGGTTLL..',
+      '..TTTTTT....',
+      '...TTTT.....',
+      '...TT.T.....',
+      '..DD..DD....',
+      '............',
     ],
     {
-      Y: 0xfef08a, // starlight gold
-      V: 0xa78bfa, // violet hair & trim
-      W: 0xf8fafc, // white vestments
-      G: 0x7c3aed, // deep violet sash
-      F: 0xfef3c7, // face
-      K: 0x1e1b4b, // eyes
-      S: 0xc4b5fd, // staff shaft
+      S: 0xcbd5e1, // silver helm
+      K: 0x0f172a, // visor
+      T: 0x14b8a6, // teal lamellar armor
+      G: 0x99f6e4, // silver-teal chestplate
+      L: 0xb45309, // pike shaft
+      P: 0xf8fafc, // sharp steel pike tip
+      D: 0x1e293b, // boots
     },
     2,
   );
 
-  // 4. Enemy Goblin — 哥布林突襲者 (Green Agile Raider with Dagger) — 16x16 * 2 = 32x32
+  // 4. Friendly Soldier: Archers — emerald hooded ranger + bow (12x12 * 2 = 24x24)
   bakePixelGrid(
     scene,
-    getEnemyTextureKey('goblin'),
+    getSoldierTextureKey('archers'),
     [
-      '................',
-      '....GG....GG....',
-      '..GGGGGGGGGG....',
-      '...GGGRRGGG.....',
-      '....GGGGGG......',
-      '.....GWWG.......',
-      '..S..LLLL.......',
-      '.SS.LLLLLL......',
-      '..SGLLLLLG......',
-      '....LLLLLL......',
-      '....GLLLLG......',
-      '.....G..G.......',
-      '....GG..GG......',
-      '...DD....DD.....',
-      '................',
-      '................',
+      '...EEEE.....',
+      '..EEEEEE....',
+      '..EFFKFE.A..',
+      '...EEEE..AA.',
+      '..EGGGEEW.A.',
+      '..EGGGEEW.A.',
+      '..EGGGEEW.A.',
+      '...EGGEE.AA.',
+      '...EBBEE.A..',
+      '...BB.B.....',
+      '..DD..DD....',
+      '............',
     ],
     {
-      G: 0x4ade80, // goblin green
-      R: 0xef4444, // fierce red eyes
+      E: 0x10b981, // emerald hood & cloak
+      G: 0x047857, // forest tunic
+      F: 0xfde68a, // face
+      K: 0x0f172a, // eye
+      A: 0xf59e0b, // longbow wood
+      W: 0xfef3c7, // bowstring
+      B: 0x334155, // leather trousers
+      D: 0x1e293b, // boots
+    },
+    2,
+  );
+
+  // 5. Enemy: Goblin Raider — agile green raider with dagger (12x12 * 2 = 24x24), facing left
+  bakePixelGrid(
+    scene,
+    getEnemyTextureKey('goblin_raider'),
+    [
+      '............',
+      '..GG...GG...',
+      '.GGGGGGGGG..',
+      '..GGRRGGG...',
+      '...GGWWG....',
+      '.S..LLLL....',
+      'SS.LLLLLL...',
+      '.S.GLLLLG...',
+      '....LLLL....',
+      '...GG..GG...',
+      '..DD....DD..',
+      '............',
+    ],
+    {
+      G: 0x4ade80, // goblin green skin
+      R: 0xef4444, // red eyes
       W: 0xfef08a, // fangs
-      L: 0x78350f, // ragged leather armor
-      S: 0xcbd5e1, // jagged dagger steel
-      D: 0x1e293b, // dark feet
+      L: 0x78350f, // ragged leather
+      S: 0xcbd5e1, // jagged blade
+      D: 0x1e293b, // feet
     },
     2,
   );
 
-  // 5. Enemy Archer — 骷髏弓手 (Bone-white/Purple Skeleton with Bow) — 16x16 * 2 = 32x32
+  // 6. Enemy: Shield Orc — bulky crimson/iron shield orc (14x14 * 2 = 28x28), facing left
   bakePixelGrid(
     scene,
-    getEnemyTextureKey('archer'),
+    getEnemyTextureKey('shield_orc'),
     [
-      '................',
-      '......BBBB......',
-      '.....BBBBBB.....',
-      '....BBPVVPBB....',
-      '....BBBBBBBB....',
-      '..P..BB..BB.....',
-      '.PP..PPPPPP.....',
-      'P.W.PPBBBBPP....',
-      'P.W.PPBPPBPP....',
-      'P.W..PPBBPP.....',
-      '.PP...PPPP......',
-      '..P...B..B......',
-      '......B..B......',
-      '.....BB..BB.....',
-      '................',
-      '................',
+      '.....IIII.....',
+      '....ICCCCI....',
+      '....CRRRRC....',
+      '....CWCCWC....',
+      '..IIICCCCII...',
+      '.IGGICCCCDDI..',
+      '.IGGICCCCDDI..',
+      '.IGGICCCCDDI..',
+      '.IGGICCCCDDI..',
+      '..IIIDDDDDI...',
+      '....DDDDDD....',
+      '....DD..DD....',
+      '...KK....KK...',
+      '..............',
+    ],
+    {
+      I: 0x64748b, // heavy iron shield & helm rim
+      G: 0x991b1b, // crimson shield face
+      C: 0xb91c1c, // crimson orc hide
+      R: 0xfef08a, // fierce eyes
+      W: 0xf8fafc, // orc tusks
+      D: 0x450a0a, // dark iron-crimson armor
+      K: 0x1e293b, // heavy boots
+    },
+    2,
+  );
+
+  // 7. Enemy: Skeleton Archer — bone/violet archer (12x12 * 2 = 24x24), facing left
+  bakePixelGrid(
+    scene,
+    getEnemyTextureKey('skeleton_archer'),
+    [
+      '....BBBB....',
+      '...BBBBBB...',
+      '...BPVVPB...',
+      '....BBBB....',
+      '.P..PPPP....',
+      'P.WPPBBPP...',
+      'P.WPPPBPP...',
+      'P.W.PPPP....',
+      '.P..B..B....',
+      '....B..B....',
+      '...BB..BB...',
+      '............',
     ],
     {
       B: 0xe2e8f0, // skeleton bone
@@ -220,78 +267,79 @@ export function generateBattleTextures(scene: Phaser.Scene): void {
     2,
   );
 
-  // 6. Enemy Bomber — 爆裂史萊姆 (Glowing Orange/Red Explosive Slime) — 16x16 * 2 = 32x32
+  // 8. Enemy: Berserker — dark-red twin-axe berserker (14x14 * 2 = 28x28), facing left
   bakePixelGrid(
     scene,
-    getEnemyTextureKey('bomber'),
+    getEnemyTextureKey('berserker'),
     [
-      '.......YY.......',
-      '......YOO.......',
-      '.......KK.......',
-      '.....RRRRRR.....',
-      '....RROOOORR....',
-      '...ROOYYYYOOR...',
-      '..RROYYKKYYORR..',
-      '..ROOYKYYKYOOR..',
-      '..ROOYYYYYYOOR..',
-      '..RROOYYYYOORR..',
-      '..RRROOOOOORRR..',
-      '...RRRRRRRRRR...',
-      '....RRRRRRRR....',
-      '.....RR..RR.....',
-      '................',
-      '................',
+      '....R....R....',
+      '....RRRRRR....',
+      '...RRYYYYRR...',
+      '...RWWKKWWR...',
+      '.S..DDDDDD..S.',
+      'SS.DDRRRRDD.SS',
+      'SS.DDRRRRDD.SS',
+      '.S..DDDDDD..S.',
+      '....DDRRDD....',
+      '....DDDDDD....',
+      '....DD..DD....',
+      '...KK....KK...',
+      '..............',
+      '..............',
     ],
     {
-      Y: 0xfef08a, // spark / molten core
-      O: 0xf97316, // glowing orange
-      R: 0xdc2626, // fiery crimson shell
-      K: 0x1c1917, // fuse / angry eyes
+      R: 0xdc2626, // blood-red warpaint / hair
+      Y: 0xfef08a, // rage eyes
+      W: 0xf8fafc, // tusks/teeth
+      K: 0x1c1917, // dark mouth
+      D: 0x7f1d1d, // dark-red scarred torso
+      S: 0xcbd5e1, // twin axe blades
     },
     2,
   );
 
-  // 7. Enemy Brute — 獸人狂戰士 (Large Dark-Crimson Elite Orc with Gold Crown & Battleaxe) — 22x22 * 2 = 44x44
+  // 9. Enemy: Enemy Commander — massive dark-crimson/gold boss warlord (22x22 * 2 = 44x44), facing left
   bakePixelGrid(
     scene,
-    getEnemyTextureKey('brute'),
+    getEnemyTextureKey('enemy_commander'),
     [
-      '.......G..GG..G.......',
-      '.......GGGGGGGG.......',
-      '......GCCCCCCCCG......',
-      '.....GCCYYYYYYCCG.....',
-      '.....CCCRRCCRRCCC.....',
+      '....G............G....',
+      '...GG....GGGG....GG...',
+      '....GG..GGGGGG..GG....',
+      '.....GGGGCCCCGGGG.....',
+      '.....GCCRRRRRRCCG.....',
+      '.....CCYYCCCCYYCC.....',
       '.....CCCCCCCCCCCC.....',
       '....GGCCWWCCWWCCGG....',
-      '..S..GDDDDDDDDDDG.....',
-      '.SSSGGDDCCCCCCDDGG....',
-      'SSSSGGDDCCGGCCDDGG....',
-      '.SSSGGDDDDDDDDDDGG....',
-      '..S..GDDCCCCCCDDG.....',
+      '..SS.GDDDDDDDDDDG.....',
+      '.SSSSGDDCCCCCCDDGG....',
+      'SSSSSGDDCCGGCCDDGGG...',
+      'SSSSSGDDDDDDDDDDGGG...',
+      '.SSSSGDDCCCCCCDDGG....',
+      '..SSSGDDDDDDDDDDGG....',
       '....SGDDDDDDDDDDG.....',
       '....S.GGDDDDDDGG......',
       '....S..GCCCCCCGG......',
       '.......GCC..CCG.......',
       '......GGCC..CCGG......',
       '......DDCC..CCDD......',
-      '.....DDDD....DDDD.....',
-      '......................',
-      '......................',
+      '.....KKKK....KKKK.....',
       '......................',
     ],
     {
-      G: 0xfacc15, // elite gold crown & outline trim
-      C: 0x991b1b, // dark crimson berserker hide
-      D: 0x450a0a, // heavy dark iron armor
-      R: 0xfef08a, // glowing yellow-gold rage eyes
-      Y: 0xef4444, // war paint / brow
+      G: 0xfacc15, // horned gold crown & trim
+      C: 0x991b1b, // dark crimson warlord hide
+      D: 0x450a0a, // obsidian-crimson plate armor
+      R: 0xef4444, // warlord brow
+      Y: 0xfef08a, // blazing golden eyes
       W: 0xf8fafc, // tusks
-      S: 0x94a3b8, // massive battleaxe blade
+      S: 0xcbd5e1, // giant greataxe blade
+      K: 0x0f172a, // iron greaves
     },
     2,
   );
 
-  // 8. Crisp 4x4 white pixel square for particle bursts & embers
+  // 10. Crisp 4x4 white pixel square for particle bursts & sparks
   if (!scene.textures.exists('px-square')) {
     const g = scene.make.graphics({ x: 0, y: 0 }, false);
     g.fillStyle(0xffffff, 1);
@@ -299,34 +347,4 @@ export function generateBattleTextures(scene: Phaser.Scene): void {
     g.generateTexture('px-square', 4, 4);
     g.destroy();
   }
-
-  // 9. Spawn Portal Rune Texture (16x24 * 2 = 32x48)
-  bakePixelGrid(
-    scene,
-    'spawn-portal',
-    [
-      '......PPPP......',
-      '....PPVVVVPP....',
-      '...PVVMMMMVVP...',
-      '..PVMM....MMVP..',
-      '..PVM..PP..MVP..',
-      '.PVM..PVVP..MVP.',
-      '.PVM.PVMMVP.MVP.',
-      '.PVM.PM..MP.MVP.',
-      '.PVM.PM..MP.MVP.',
-      '.PVM.PVMMVP.MVP.',
-      '.PVM..PVVP..MVP.',
-      '..PVM..PP..MVP..',
-      '..PVMM....MMVP..',
-      '...PVVMMMMVVP...',
-      '....PPVVVVPP....',
-      '......PPPP......',
-    ],
-    {
-      P: 0x581c87,
-      V: 0x9333ea,
-      M: 0xe879f9,
-    },
-    2,
-  );
 }

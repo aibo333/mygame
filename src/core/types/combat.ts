@@ -1,296 +1,123 @@
-export type SquadRole = 'tank' | 'dps' | 'support';
+export type RegimentType = 'shieldmen' | 'pikemen' | 'archers';
 
-export type EnemyArchetype = 'goblin' | 'archer' | 'bomber' | 'brute';
+export type RegimentOrder = 'follow' | 'hold' | 'engage';
 
-export type TacticalStance = 'defense' | 'assault' | 'scatter';
+export type RegimentFormation = 'compact' | 'spread';
+
+export type EnemyUnitType =
+  | 'goblin_raider'
+  | 'shield_orc'
+  | 'skeleton_archer'
+  | 'berserker'
+  | 'enemy_commander';
 
 export type CombatStatus = 'running' | 'victory' | 'defeat';
 
-export type SkillTriggerCondition =
-  | 'always'
-  | 'self_hp_below_55'
-  | 'any_ally_hp_below_45'
-  | 'elite_or_multi_enemies';
-
-export type SkillEffectType =
-  | 'self_shield_taunt'
-  | 'damage_reduction_self_heal'
-  | 'single_target_burst'
-  | 'aoe_volley'
-  | 'heal_lowest_ally'
-  | 'party_heal_shield';
-
-export interface Vec2 {
-  x: number;
-  y: number;
+export interface PlayerInput {
+  moveX: number; // -1..1
+  moveY: number; // -1..1
+  aimX: number; // world X
+  aimY: number; // world Y
+  attackPressed: boolean;
+  dodgePressed: boolean;
+  skill1Pressed: boolean; // 破陣衝鋒 (Q / RMB)
+  skill2Pressed: boolean; // 戰意咆哮 (E)
 }
 
-export interface SkillDefinition {
-  id: string;
-  name: string;
-  description: string;
-  effectType: SkillEffectType;
-  cooldownSec: number;
-  maxChargesPerWave?: number;
-  triggerCondition: SkillTriggerCondition;
-  damageMultiplier?: number;
-  healAmount?: number;
-  shieldAmount?: number;
-  aoeRadius?: number;
-  tauntRadius?: number;
-  tauntDurationSec?: number;
-  damageReductionRatio?: number;
-  buffDurationSec?: number;
-}
-
-export interface SkillRuntimeState {
-  skillId: string;
-  name: string;
-  description: string;
-  effectType: SkillEffectType;
-  cooldownSec: number;
-  cooldownRemainingSec: number;
-  maxChargesPerWave: number | null;
-  chargesRemaining: number | null;
-  triggerCondition: SkillTriggerCondition;
-  timesCast: number;
-}
-
-export interface HeroDefinition {
-  id: string;
-  name: string;
-  title: string;
-  role: SquadRole;
-  maxHp: number;
-  atk: number;
-  def: number;
-  attackSpeed: number;
-  attackRange: number;
-  moveSpeed: number;
-  interceptRadius: number;
-  critChance: number;
-  critMultiplier: number;
-  radius: number;
-  skills: SkillDefinition[];
-}
-
-export interface HeroStatsTelemetry {
-  damageDealt: number;
-  damageTaken: number;
-  healingDone: number;
-  kills: number;
-}
+export type RegimentCommand =
+  | { type: 'order'; order: RegimentOrder; targetX?: number; targetY?: number }
+  | { type: 'formation'; formation: RegimentFormation }
+  | { type: 'skill'; targetX: number; targetY: number };
 
 export interface HeroState {
-  id: string;
   name: string;
-  title: string;
-  role: SquadRole;
   x: number;
   y: number;
   radius: number;
+  facingAngle: number;
   hp: number;
   maxHp: number;
-  shield: number;
-  atk: number;
-  def: number;
-  attackSpeed: number;
-  attackRange: number;
-  moveSpeed: number;
-  interceptRadius: number;
-  critChance: number;
-  critMultiplier: number;
-  attackCooldownSec: number;
-  damageReductionRatio: number;
-  damageReductionRemainingSec: number;
+  stamina: number;
+  maxStamina: number;
   alive: boolean;
-  targetEnemyId: string | null;
-  skills: SkillRuntimeState[];
-  stats: HeroStatsTelemetry;
+  respawnRemainingSec: number;
+  comboStep: 0 | 1 | 2;
+  attackCooldownSec: number;
+  dodgeRemainingSec: number;
+  invulnerableRemainingSec: number;
+  skill1CooldownSec: number;
+  skill1MaxCooldownSec: number;
+  skill2CooldownSec: number;
+  skill2MaxCooldownSec: number;
+  warcryRemainingSec: number;
+  kills: number;
+  damageDealt: number;
 }
 
-export interface EnemyDefinition {
-  archetype: EnemyArchetype;
+export interface SoldierState {
+  id: string;
+  index: number;
+  x: number;
+  y: number;
+  facingAngle: number;
+  hp: number;
+  maxHp: number;
+  alive: boolean;
+  slotX: number;
+  slotY: number;
+  attackCooldownSec: number;
+  shieldBlocking: boolean;
+  chargingRemainingSec: number;
+}
+
+export interface RegimentState {
+  type: RegimentType;
   name: string;
   description: string;
-  isElite: boolean;
-  maxHp: number;
-  atk: number;
-  def: number;
-  attackSpeed: number;
-  attackRange: number;
-  moveSpeed: number;
-  gateDamage: number;
-  threatPriority: number;
+  order: RegimentOrder;
+  formation: RegimentFormation;
+  anchorX: number;
+  anchorY: number;
+  skillName: string;
+  skillCooldownSec: number;
+  skillMaxCooldownSec: number;
+  aliveCount: number;
+  maxCount: number;
+  soldiers: SoldierState[];
+}
+
+export interface EnemyTelegraph {
+  kind: 'cleave' | 'whirlwind';
+  x: number;
+  y: number;
   radius: number;
-  aoeRadius?: number;
-  isExplosive?: boolean;
+  remainingSec: number;
+  totalSec: number;
 }
 
 export interface EnemyState {
   id: string;
-  archetype: EnemyArchetype;
+  type: EnemyUnitType;
   name: string;
-  isElite: boolean;
+  isCommander: boolean;
   x: number;
   y: number;
   radius: number;
+  facingAngle: number;
   hp: number;
   maxHp: number;
-  atk: number;
-  def: number;
-  attackSpeed: number;
-  attackRange: number;
-  moveSpeed: number;
-  gateDamage: number;
-  threatPriority: number;
-  aoeRadius?: number;
-  isExplosive?: boolean;
-  attackCooldownSec: number;
   alive: boolean;
-  tauntedByHeroId: string | null;
-  tauntRemainingSec: number;
-  engagedHeroId: string | null;
-  targetKind: 'gate' | 'hero';
+  telegraph?: EnemyTelegraph;
 }
 
-export interface WaveSpawnEntry {
-  spawnTimeSec: number;
-  archetype: EnemyArchetype;
-  laneY: number;
-  spawnX?: number;
-}
-
-export interface WaveDefinition {
+export interface PendingVolley {
   id: string;
-  waveNumber: number;
-  name: string;
-  description: string;
-  recommendedStanceHint: string;
-  spawns: WaveSpawnEntry[];
-}
-
-export interface StanceModifier {
-  stance: TacticalStance;
-  label: string;
-  shortLabel: string;
-  description: string;
-  teamAtkMultiplier: number;
-  dpsDamageMultiplier: number;
-  attackSpeedMultiplier: number;
-  damageTakenMultiplier: number;
-  aoeDamageTakenMultiplier: number;
-  healMultiplier: number;
-  moveSpeedMultiplier: number;
-  tankInterceptRadiusMultiplier: number;
-}
-
-export type CombatEvent =
-  | {
-      type: 'damage';
-      timeSec: number;
-      sourceId: string;
-      sourceTeam: 'hero' | 'enemy';
-      targetId: string;
-      targetTeam: 'hero' | 'enemy';
-      amount: number;
-      shieldAbsorbed: number;
-      isCrit: boolean;
-      isAoe: boolean;
-      skillId?: string;
-      x: number;
-      y: number;
-    }
-  | {
-      type: 'heal';
-      timeSec: number;
-      sourceId: string;
-      targetId: string;
-      amount: number;
-      skillId?: string;
-      x: number;
-      y: number;
-    }
-  | {
-      type: 'shield';
-      timeSec: number;
-      sourceId: string;
-      targetId: string;
-      amount: number;
-      skillId?: string;
-      x: number;
-      y: number;
-    }
-  | {
-      type: 'skill_cast';
-      timeSec: number;
-      heroId: string;
-      heroName: string;
-      skillId: string;
-      skillName: string;
-      x: number;
-      y: number;
-      targetX?: number;
-      targetY?: number;
-      radius?: number;
-    }
-  | {
-      type: 'stance_changed';
-      timeSec: number;
-      previousStance: TacticalStance;
-      nextStance: TacticalStance;
-    }
-  | {
-      type: 'gate_hit';
-      timeSec: number;
-      enemyId: string;
-      amount: number;
-      gateHpRemaining: number;
-      x: number;
-      y: number;
-    }
-  | {
-      type: 'enemy_spawned';
-      timeSec: number;
-      enemyId: string;
-      archetype: EnemyArchetype;
-      isElite: boolean;
-      x: number;
-      y: number;
-    }
-  | {
-      type: 'unit_died';
-      timeSec: number;
-      unitId: string;
-      team: 'hero' | 'enemy';
-      killerId?: string;
-      x: number;
-      y: number;
-    }
-  | {
-      type: 'combat_ended';
-      timeSec: number;
-      status: 'victory' | 'defeat';
-      gateHpRemaining: number;
-      totalKills: number;
-    };
-
-export interface StanceChangeResult {
-  accepted: boolean;
-  reason?: 'cooldown' | 'same_stance' | 'combat_ended';
-  currentStance: TacticalStance;
-  cooldownRemainingSec: number;
-  event?: Extract<CombatEvent, { type: 'stance_changed' }>;
-}
-
-export interface WaveProgressSnapshot {
-  id: string;
-  waveNumber: number;
-  name: string;
-  totalEnemies: number;
-  spawnedEnemies: number;
-  defeatedEnemies: number;
-  aliveEnemies: number;
+  x: number;
+  y: number;
+  radius: number;
+  remainingSec: number;
+  totalSec: number;
+  damage: number;
 }
 
 export interface CombatSnapshot {
@@ -302,29 +129,183 @@ export interface CombatSnapshot {
   gateX: number;
   gateHp: number;
   gateMaxHp: number;
-  stance: TacticalStance;
-  stanceCooldownRemainingSec: number;
-  stanceCooldownSec: number;
-  wave: WaveProgressSnapshot;
-  heroes: HeroState[];
+  waveNumber: number;
+  waveName: string;
+  waveDescription: string;
+  totalEnemies: number;
+  defeatedEnemies: number;
+  hero: HeroState;
+  regiment: RegimentState;
   enemies: EnemyState[];
-  totalDamageDealt: number;
-  totalHealingDone: number;
+  pendingVolleys: PendingVolley[];
 }
+
+export type CombatEvent =
+  | {
+      type: 'hero_slash';
+      x: number;
+      y: number;
+      angle: number;
+      radius: number;
+      arcRad: number;
+      comboStep: 0 | 1 | 2;
+    }
+  | {
+      type: 'hero_charge';
+      fromX: number;
+      fromY: number;
+      toX: number;
+      toY: number;
+    }
+  | {
+      type: 'hero_warcry';
+      x: number;
+      y: number;
+      radius: number;
+    }
+  | {
+      type: 'hero_dodge';
+      x: number;
+      y: number;
+      angle: number;
+    }
+  | {
+      type: 'hero_down';
+      x: number;
+      y: number;
+      respawnSec: number;
+    }
+  | {
+      type: 'hero_respawn';
+      x: number;
+      y: number;
+    }
+  | {
+      type: 'regiment_command';
+      commandType: 'order' | 'formation' | 'skill';
+      order?: RegimentOrder;
+      formation?: RegimentFormation;
+      x: number;
+      y: number;
+      label: string;
+    }
+  | {
+      type: 'arrow_shot';
+      fromX: number;
+      fromY: number;
+      toX: number;
+      toY: number;
+      isPlayerSide: boolean;
+    }
+  | {
+      type: 'volley_impact';
+      x: number;
+      y: number;
+      radius: number;
+    }
+  | {
+      type: 'commander_slam';
+      x: number;
+      y: number;
+      radius: number;
+    }
+  | {
+      type: 'damage';
+      x: number;
+      y: number;
+      amount: number;
+      isCrit: boolean;
+      targetTeam: 'player' | 'enemy';
+      blocked?: boolean;
+    }
+  | {
+      type: 'gate_hit';
+      x: number;
+      y: number;
+      amount: number;
+      gateHpRemaining: number;
+    }
+  | {
+      type: 'unit_died';
+      x: number;
+      y: number;
+      team: 'hero' | 'regiment' | 'enemy';
+      isCommander?: boolean;
+    }
+  | {
+      type: 'combat_ended';
+      status: 'victory' | 'defeat';
+    };
 
 export interface CombatTickResult {
   snapshot: CombatSnapshot;
   events: CombatEvent[];
 }
 
+export interface RegimentDefinition {
+  type: RegimentType;
+  name: string;
+  description: string;
+  count: number;
+  maxHp: number;
+  attack: number;
+  defense: number;
+  attackRange: number;
+  attackIntervalSec: number;
+  moveSpeed: number;
+  radius: number;
+  isRanged: boolean;
+  skillName: string;
+  skillCooldownSec: number;
+  compactLabel: string;
+  spreadLabel: string;
+}
+
+export interface EnemyDefinition {
+  type: EnemyUnitType;
+  name: string;
+  isCommander: boolean;
+  maxHp: number;
+  attack: number;
+  defense: number;
+  attackRange: number;
+  attackIntervalSec: number;
+  moveSpeed: number;
+  radius: number;
+  isRanged: boolean;
+  gateDamage: number;
+  telegraphKind?: 'cleave' | 'whirlwind';
+  telegraphRadius?: number;
+  telegraphWindupSec?: number;
+  telegraphCooldownSec?: number;
+  telegraphDamage?: number;
+}
+
+export interface WaveSpawnEntry {
+  type: EnemyUnitType;
+  count: number;
+  spawnTimeSec: number;
+  spawnY?: number;
+  spawnX?: number;
+  customName?: string;
+  hpMultiplier?: number;
+  telegraphKind?: 'cleave' | 'whirlwind';
+  telegraphRadius?: number;
+}
+
+export interface WaveDefinition {
+  waveNumber: number;
+  name: string;
+  description: string;
+  spawns: WaveSpawnEntry[];
+}
+
 export interface CombatConfig {
-  wave?: WaveDefinition;
-  squad?: HeroDefinition[];
-  initialStance?: TacticalStance;
+  regimentType?: RegimentType;
+  wave?: WaveDefinition | number;
+  seed?: number;
   arenaWidth?: number;
   arenaHeight?: number;
   gateX?: number;
   gateMaxHp?: number;
-  stanceCooldownSec?: number;
-  seed?: number;
 }
