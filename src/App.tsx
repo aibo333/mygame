@@ -348,18 +348,28 @@ export default function App() {
             break;
           }
 
-          // Compute normalized movement vector from held keys
+          // Compute camera-relative normalized movement vector from held keys
           const keys = heldKeysRef.current;
-          let moveX = 0;
-          let moveY = 0;
-          if (keys.has('KeyW') || keys.has('ArrowUp')) moveY -= 1;
-          if (keys.has('KeyS') || keys.has('ArrowDown')) moveY += 1;
-          if (keys.has('KeyA') || keys.has('ArrowLeft')) moveX -= 1;
-          if (keys.has('KeyD') || keys.has('ArrowRight')) moveX += 1;
-          if (moveX !== 0 && moveY !== 0) {
-            const invLen = Math.SQRT1_2;
-            moveX *= invLen;
-            moveY *= invLen;
+          const up = keys.has('KeyW') || keys.has('ArrowUp');
+          const down = keys.has('KeyS') || keys.has('ArrowDown');
+          const left = keys.has('KeyA') || keys.has('ArrowLeft');
+          const right = keys.has('KeyD') || keys.has('ArrowRight');
+          const forwardInput = (up ? 1 : 0) - (down ? 1 : 0);
+          const rightInput = (right ? 1 : 0) - (left ? 1 : 0);
+
+          const basis = controllerRef.current?.getCameraBasis2D() ?? {
+            forwardX: 0,
+            forwardY: -1,
+            rightX: 1,
+            rightY: 0,
+          };
+
+          let moveX = forwardInput * basis.forwardX + rightInput * basis.rightX;
+          let moveY = forwardInput * basis.forwardY + rightInput * basis.rightY;
+          const moveLen = Math.hypot(moveX, moveY);
+          if (moveLen > 1) {
+            moveX /= moveLen;
+            moveY /= moveLen;
           }
 
           const ptr = getPointerOrDefault();

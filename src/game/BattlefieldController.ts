@@ -3,11 +3,12 @@ import {
   Battlefield3DScene,
   DEFAULT_ARENA_HEIGHT,
   DEFAULT_ARENA_WIDTH,
+  type CameraBasis2D,
   type CameraMode,
   type PointerWorldState,
 } from './Battlefield3DScene';
 
-export type { CameraMode, PointerWorldState };
+export type { CameraBasis2D, CameraMode, PointerWorldState };
 
 export class BattlefieldController {
   private scene3d: Battlefield3DScene | null = null;
@@ -46,6 +47,13 @@ export class BattlefieldController {
       return this.cameraMode;
     }
     return this.scene3d.getCameraMode();
+  }
+
+  public getCameraBasis2D(): CameraBasis2D {
+    if (this.destroyed || !this.scene3d) {
+      return { forwardX: 0, forwardY: -1, rightX: 1, rightY: 0 };
+    }
+    return this.scene3d.getCameraBasis2D();
   }
 
   public destroy(): void {

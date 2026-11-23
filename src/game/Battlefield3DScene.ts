@@ -20,6 +20,13 @@ import {
 
 export type CameraMode = 'tactical' | 'tps';
 
+export interface CameraBasis2D {
+  forwardX: number; // core X component of camera forward on ground plane
+  forwardY: number; // core Y component of camera forward on ground plane
+  rightX: number;   // core X component of camera right on ground plane
+  rightY: number;   // core Y component of camera right on ground plane
+}
+
 export interface PointerWorldState {
   x: number;
   y: number;
@@ -795,6 +802,25 @@ export class Battlefield3DScene {
 
   public getCameraMode(): CameraMode {
     return this.cameraMode;
+  }
+
+  public getCameraBasis2D(): CameraBasis2D {
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    const fx = dir.x;
+    const fy = dir.z;
+    const len = Math.hypot(fx, fy);
+    if (len < 1e-4) {
+      return { forwardX: 0, forwardY: -1, rightX: 1, rightY: 0 };
+    }
+    const forwardX = fx / len;
+    const forwardY = fy / len;
+    return {
+      forwardX,
+      forwardY,
+      rightX: -forwardY,
+      rightY: forwardX,
+    };
   }
 
   public getPointerState(): PointerWorldState {
@@ -1574,16 +1600,16 @@ export class Battlefield3DScene {
     const targetLook = new THREE.Vector3();
 
     if (this.cameraMode === 'tactical') {
-      const trackX = heroX * 0.45;
+      const trackX = heroX * 0.45 + 2.0;
       const trackZ = heroZ * 0.35;
       targetPos.set(trackX, 25, trackZ + 20);
-      targetLook.set(trackX + 2.0, 0, trackZ);
+      targetLook.set(trackX, 0, trackZ);
     } else {
-      // Conqueror's Blade over-the-shoulder 3rd-person view
+      // Conqueror's Blade over-the-shoulder 3rd-person view aligned straight along +X
       const aimWorldX = toWorldX(this.pointerState.x);
       const aimWorldZ = toWorldZ(this.pointerState.y);
-      const aimBiasX = Math.max(-2.5, Math.min(4.5, (aimWorldX - heroX) * 0.2));
-      const aimBiasZ = Math.max(-3.0, Math.min(3.0, (aimWorldZ - heroZ) * 0.22));
+      const aimBiasX = Math.max(-2.0, Math.min(4.0, (aimWorldX - heroX) * 0.16));
+      const aimBiasZ = Math.max(-1.6, Math.min(1.6, (aimWorldZ - heroZ) * 0.12));
 
       // Keep TPS camera safely in front of the castle wall & watchtowers
       const gateWorldX = toWorldX(this.builtGateX);
@@ -1591,11 +1617,11 @@ export class Battlefield3DScene {
       const desiredCamX = heroX - 10.5;
       const camX = Math.max(minCamX, desiredCamX);
       const wallSqueeze = Math.max(0, minCamX - desiredCamX);
-      const camY = 6.5 + Math.min(4.2, wallSqueeze * 0.42);
-      const camZ = heroZ + 4.5 + Math.min(2.0, wallSqueeze * 0.2);
+      const camY = 6.2 + Math.min(4.0, wallSqueeze * 0.4);
+      const camZ = heroZ + 1.5 + Math.min(0.6, wallSqueeze * 0.06);
 
       targetPos.set(camX, camY, camZ);
-      targetLook.set(heroX + 6.5 + aimBiasX, 1.15, heroZ + aimBiasZ);
+      targetLook.set(heroX + 8.5 + aimBiasX, 1.25, heroZ + 0.6 + aimBiasZ);
     }
 
     const damp = 1 - Math.exp(-6.5 * dt);
