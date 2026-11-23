@@ -339,6 +339,9 @@ export class Battlefield3DScene {
 
   // Camera state
   private cameraMode: CameraMode = 'tactical';
+  private tpsYaw = 0;
+  private tpsPitch = 0.42;
+  private isPointerLocked = false;
   private currentCamPos = new THREE.Vector3(-4, 25, 20);
   private currentCamLook = new THREE.Vector3(0, 0, 0);
   private shakeIntensity = 0;
@@ -347,6 +350,7 @@ export class Battlefield3DScene {
   private raycaster = new THREE.Raycaster();
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private pointerNdc = new THREE.Vector2(0, 0);
+  private lockedAimNdc = new THREE.Vector2(0, 0.08);
   private pointerInside = false;
   private pointerState: PointerWorldState = {
     x: DEFAULT_ARENA_WIDTH * 0.5,
@@ -396,6 +400,7 @@ export class Battlefield3DScene {
   private onPointerUpBound: (e: PointerEvent) => void;
   private onPointerLeaveBound: () => void;
   private onContextMenuBound: (e: MouseEvent) => void;
+  private onPointerLockChangeBound: () => void;
 
   constructor(container: HTMLElement, initialSnapshot?: CombatSnapshot) {
     this.container = container;
@@ -477,6 +482,9 @@ export class Battlefield3DScene {
     this.onContextMenuBound = (e) => {
       e.preventDefault();
     };
+    this.onPointerLockChangeBound = () => {
+      this.isPointerLocked = document.pointerLockElement === this.renderer.domElement;
+    };
 
     const canvas = this.renderer.domElement;
     canvas.addEventListener('pointermove', this.onPointerMoveBound);
@@ -484,6 +492,7 @@ export class Battlefield3DScene {
     window.addEventListener('pointerup', this.onPointerUpBound);
     canvas.addEventListener('pointerleave', this.onPointerLeaveBound);
     canvas.addEventListener('contextmenu', this.onContextMenuBound);
+    document.addEventListener('pointerlockchange', this.onPointerLockChangeBound);
 
     // 8. ResizeObserver
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
@@ -797,7 +806,21 @@ export class Battlefield3DScene {
   // ---------------------------------------------------------------------------
 
   public setCameraMode(mode: CameraMode): void {
+    if (this.cameraMode === mode) return;
     this.cameraMode = mode;
+    if (mode === 'tactical') {
+      if (document.pointerLockElement === this.renderer.domElement) {
+        try {
+          document.exitPointerLock?.();
+        } catch {
+          // ignore if browser declines
+        }
+      }
+      this.isPointerLocked = false;
+    } else {
+      this.tpsYaw = 0;
+      this.tpsPitch = 0.42;
+    }
   }
 
   public getCameraMode(): CameraMode {
@@ -1524,7 +1547,11 @@ export class Battlefield3DScene {
   }
 
   private updateRaycastFromNdc(): void {
-    this.raycaster.setFromCamera(this.pointerNdc, this.camera);
+    const ndc =
+      this.cameraMode === 'tps' && this.isPointerLocked
+        ? this.lockedAimNdc
+        : this.pointerNdc;
+    this.raycaster.setFromCamera(ndc, this.camera);
     const hit = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
       const cx = toCoreX(hit.x);
@@ -1536,6 +1563,13 @@ export class Battlefield3DScene {
   }
 
   private handlePointerMove(e: PointerEvent): void {
+    if (this.cameraMode === 'tps' && this.isPointerLocked) {
+      this.tpsYaw += e.movementX * 0.0032;
+      this.tpsPitch = Math.max(0.22, Math.min(0.78, this.tpsPitch + e.movementY * 0.0022));
+      this.updateRaycastFromNdc();
+      return;
+    }
+
     this.pointerInside = true;
     this.updatePointerNdcFromEvent(e);
     this.updateRaycastFromNdc();
@@ -1543,7 +1577,16 @@ export class Battlefield3DScene {
 
   private handlePointerDown(e: PointerEvent): void {
     this.pointerInside = true;
-    this.updatePointerNdcFromEvent(e);
+    if (this.cameraMode === 'tps' && e.button === 0 && !this.isPointerLocked) {
+      try {
+        this.renderer.domElement.requestPointerLock?.();
+      } catch {
+        // ignore if browser declines pointer lock
+      }
+    }
+    if (!(this.cameraMode === 'tps' && this.isPointerLocked)) {
+      this.updatePointerNdcFromEvent(e);
+    }
     this.updateRaycastFromNdc();
     if (e.button === 0) this.pointerState.leftDown = true;
     if (e.button === 2) this.pointerState.rightDown = true;
@@ -1582,7 +1625,7 @@ export class Battlefield3DScene {
     this.elapsedTime += dt;
 
     this.updateCamera(dt);
-    if (this.pointerInside) {
+    if (this.pointerInside || this.cameraMode === 'tps') {
       this.updateRaycastFromNdc();
     }
     this.updateEnvironmentAnimations(dt);
@@ -1605,26 +1648,44 @@ export class Battlefield3DScene {
       targetPos.set(trackX, 25, trackZ + 20);
       targetLook.set(trackX, 0, trackZ);
     } else {
-      // Conqueror's Blade over-the-shoulder 3rd-person view aligned straight along +X
-      const aimWorldX = toWorldX(this.pointerState.x);
-      const aimWorldZ = toWorldZ(this.pointerState.y);
-      const aimBiasX = Math.max(-2.0, Math.min(4.0, (aimWorldX - heroX) * 0.16));
-      const aimBiasZ = Math.max(-1.6, Math.min(1.6, (aimWorldZ - heroZ) * 0.12));
+      // Smooth free-cursor edge-steering when unlocked
+      if (!this.isPointerLocked && this.pointerInside) {
+        const absX = Math.abs(this.pointerNdc.x);
+        if (absX > 0.22) {
+          this.tpsYaw += Math.sign(this.pointerNdc.x) * ((absX - 0.22) / 0.78) * 1.9 * dt;
+        }
+      }
 
-      // Keep TPS camera safely in front of the castle wall & watchtowers
-      const gateWorldX = toWorldX(this.builtGateX);
-      const minCamX = gateWorldX + 2.0;
-      const desiredCamX = heroX - 10.5;
+      // 360° TPS orbit camera around hero
+      const fwdX = Math.cos(this.tpsYaw);
+      const fwdZ = Math.sin(this.tpsYaw);
+      const rightX = -fwdZ;
+      const rightZ = fwdX;
+
+      const dist = 10.5;
+      const camHeight = 2.2 + Math.sin(this.tpsPitch) * dist;
+      const horizDist = Math.cos(this.tpsPitch) * dist;
+      const shoulder = 1.4;
+
+      const desiredCamX = heroX - fwdX * horizDist + rightX * shoulder;
+      const camZ = heroZ - fwdZ * horizDist + rightZ * shoulder;
+
+      // Wall-occlusion safety against the castle gatehouse
+      const minCamX = toWorldX(this.builtGateX) + 1.8;
       const camX = Math.max(minCamX, desiredCamX);
       const wallSqueeze = Math.max(0, minCamX - desiredCamX);
-      const camY = 6.2 + Math.min(4.0, wallSqueeze * 0.4);
-      const camZ = heroZ + 1.5 + Math.min(0.6, wallSqueeze * 0.06);
+      const camY = camHeight + Math.min(3.8, wallSqueeze * 0.35);
 
       targetPos.set(camX, camY, camZ);
-      targetLook.set(heroX + 8.5 + aimBiasX, 1.25, heroZ + 0.6 + aimBiasZ);
+      targetLook.set(
+        heroX + fwdX * 9.0 + rightX * 0.8,
+        1.3,
+        heroZ + fwdZ * 9.0 + rightZ * 0.8
+      );
     }
 
-    const damp = 1 - Math.exp(-6.5 * dt);
+    const followRate = this.cameraMode === 'tps' && this.isPointerLocked ? 14.0 : 6.5;
+    const damp = 1 - Math.exp(-followRate * dt);
     this.currentCamPos.lerp(targetPos, damp);
     this.currentCamLook.lerp(targetLook, damp);
 
@@ -1804,6 +1865,14 @@ export class Battlefield3DScene {
     window.removeEventListener('pointerup', this.onPointerUpBound);
     canvas.removeEventListener('pointerleave', this.onPointerLeaveBound);
     canvas.removeEventListener('contextmenu', this.onContextMenuBound);
+    document.removeEventListener('pointerlockchange', this.onPointerLockChangeBound);
+    if (document.pointerLockElement === canvas) {
+      try {
+        document.exitPointerLock?.();
+      } catch {
+        // ignore
+      }
+    }
 
     this.sharedCubeGeo.dispose();
     this.sharedArrowGeo.dispose();
