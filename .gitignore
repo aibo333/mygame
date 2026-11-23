@@ -1,4 +1,19 @@
-node_modules
-dist
+# Godot 4+ specific ignores
+.godot/
+
+# Godot-specific ignores
+*.translation
+
+# Imported textures and samples
+.import/
+
+# Mono-specific ignores
+.mono/
+data_*/
+mono_crash.*.json
+
+# OS / Editor
 .DS_Store
-*.local
+Thumbs.db
+*.tmp
+*.bak
