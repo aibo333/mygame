@@ -350,8 +350,10 @@ export class Battlefield3DScene {
   private raycaster = new THREE.Raycaster();
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private pointerNdc = new THREE.Vector2(0, 0);
-  private lockedAimNdc = new THREE.Vector2(0, 0.08);
+  private lockedAimNdc = new THREE.Vector2(0, 0.06);
   private pointerInside = false;
+  private lastClientX: number | null = null;
+  private lastClientY: number | null = null;
   private pointerState: PointerWorldState = {
     x: DEFAULT_ARENA_WIDTH * 0.5,
     y: DEFAULT_ARENA_HEIGHT * 0.5,
@@ -401,6 +403,7 @@ export class Battlefield3DScene {
   private onPointerLeaveBound: () => void;
   private onContextMenuBound: (e: MouseEvent) => void;
   private onPointerLockChangeBound: () => void;
+  private onDocMouseMoveBound: (e: MouseEvent) => void;
 
   constructor(container: HTMLElement, initialSnapshot?: CombatSnapshot) {
     this.container = container;
@@ -484,7 +487,10 @@ export class Battlefield3DScene {
     };
     this.onPointerLockChangeBound = () => {
       this.isPointerLocked = document.pointerLockElement === this.renderer.domElement;
+      this.lastClientX = null;
+      this.lastClientY = null;
     };
+    this.onDocMouseMoveBound = (e) => this.handleDocMouseMove(e);
 
     const canvas = this.renderer.domElement;
     canvas.addEventListener('pointermove', this.onPointerMoveBound);
@@ -493,6 +499,7 @@ export class Battlefield3DScene {
     canvas.addEventListener('pointerleave', this.onPointerLeaveBound);
     canvas.addEventListener('contextmenu', this.onContextMenuBound);
     document.addEventListener('pointerlockchange', this.onPointerLockChangeBound);
+    document.addEventListener('mousemove', this.onDocMouseMoveBound);
 
     // 8. ResizeObserver
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
@@ -808,6 +815,8 @@ export class Battlefield3DScene {
   public setCameraMode(mode: CameraMode): void {
     if (this.cameraMode === mode) return;
     this.cameraMode = mode;
+    this.lastClientX = null;
+    this.lastClientY = null;
     if (mode === 'tactical') {
       if (document.pointerLockElement === this.renderer.domElement) {
         try {
@@ -1547,10 +1556,7 @@ export class Battlefield3DScene {
   }
 
   private updateRaycastFromNdc(): void {
-    const ndc =
-      this.cameraMode === 'tps' && this.isPointerLocked
-        ? this.lockedAimNdc
-        : this.pointerNdc;
+    const ndc = this.cameraMode === 'tps' ? this.lockedAimNdc : this.pointerNdc;
     this.raycaster.setFromCamera(ndc, this.camera);
     const hit = new THREE.Vector3();
     if (this.raycaster.ray.intersectPlane(this.groundPlane, hit)) {
@@ -1562,16 +1568,31 @@ export class Battlefield3DScene {
     }
   }
 
+  private handleDocMouseMove(e: MouseEvent): void {
+    if (this.cameraMode === 'tps' && this.isPointerLocked) {
+      this.tpsYaw += e.movementX * 0.0038;
+      this.tpsPitch = Math.max(0.18, Math.min(0.85, this.tpsPitch + e.movementY * 0.0024));
+      this.updateRaycastFromNdc();
+    }
+  }
+
   private handlePointerMove(e: PointerEvent): void {
     if (this.cameraMode === 'tps' && this.isPointerLocked) {
-      this.tpsYaw += e.movementX * 0.0032;
-      this.tpsPitch = Math.max(0.22, Math.min(0.78, this.tpsPitch + e.movementY * 0.0022));
-      this.updateRaycastFromNdc();
       return;
     }
 
     this.pointerInside = true;
     this.updatePointerNdcFromEvent(e);
+
+    if (this.cameraMode === 'tps' && !this.isPointerLocked) {
+      const dx = this.lastClientX !== null ? e.clientX - this.lastClientX : 0;
+      const dy = this.lastClientY !== null ? e.clientY - this.lastClientY : 0;
+      this.lastClientX = e.clientX;
+      this.lastClientY = e.clientY;
+      this.tpsYaw += dx * 0.0062;
+      this.tpsPitch = Math.max(0.18, Math.min(0.85, this.tpsPitch + dy * 0.0032));
+    }
+
     this.updateRaycastFromNdc();
   }
 
@@ -1599,6 +1620,8 @@ export class Battlefield3DScene {
 
   private handlePointerLeave(): void {
     this.pointerInside = false;
+    this.lastClientX = null;
+    this.lastClientY = null;
     this.pointerState.leftDown = false;
     this.pointerState.rightDown = false;
   }
@@ -1648,11 +1671,11 @@ export class Battlefield3DScene {
       targetPos.set(trackX, 25, trackZ + 20);
       targetLook.set(trackX, 0, trackZ);
     } else {
-      // Smooth free-cursor edge-steering when unlocked
+      // Smooth continuous edge-turn when holding cursor near left/right edge while unlocked
       if (!this.isPointerLocked && this.pointerInside) {
         const absX = Math.abs(this.pointerNdc.x);
-        if (absX > 0.22) {
-          this.tpsYaw += Math.sign(this.pointerNdc.x) * ((absX - 0.22) / 0.78) * 1.9 * dt;
+        if (absX > 0.62) {
+          this.tpsYaw += Math.sign(this.pointerNdc.x) * ((absX - 0.62) / 0.38) * 2.6 * dt;
         }
       }
 
@@ -1684,7 +1707,7 @@ export class Battlefield3DScene {
       );
     }
 
-    const followRate = this.cameraMode === 'tps' && this.isPointerLocked ? 14.0 : 6.5;
+    const followRate = this.cameraMode === 'tps' ? 16.0 : 6.5;
     const damp = 1 - Math.exp(-followRate * dt);
     this.currentCamPos.lerp(targetPos, damp);
     this.currentCamLook.lerp(targetLook, damp);
@@ -1866,6 +1889,7 @@ export class Battlefield3DScene {
     canvas.removeEventListener('pointerleave', this.onPointerLeaveBound);
     canvas.removeEventListener('contextmenu', this.onContextMenuBound);
     document.removeEventListener('pointerlockchange', this.onPointerLockChangeBound);
+    document.removeEventListener('mousemove', this.onDocMouseMoveBound);
     if (document.pointerLockElement === canvas) {
       try {
         document.exitPointerLock?.();
