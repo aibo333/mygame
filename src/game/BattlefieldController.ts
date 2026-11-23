@@ -1,57 +1,30 @@
-import Phaser from 'phaser';
 import type { CombatEvent, CombatSnapshot } from '../core/types/combat';
 import {
-  BattleScene,
+  Battlefield3DScene,
   DEFAULT_ARENA_HEIGHT,
   DEFAULT_ARENA_WIDTH,
-} from './BattleScene';
+  type CameraMode,
+  type PointerWorldState,
+} from './Battlefield3DScene';
 
-export interface PointerWorldState {
-  x: number;
-  y: number;
-  leftDown: boolean;
-  rightDown: boolean;
-}
+export type { CameraMode, PointerWorldState };
 
 export class BattlefieldController {
-  private game: Phaser.Game | null = null;
-  private scene: BattleScene;
+  private scene3d: Battlefield3DScene | null = null;
+  private cameraMode: CameraMode = 'tactical';
   private destroyed = false;
 
   constructor(container: HTMLElement, initialSnapshot?: CombatSnapshot) {
-    this.scene = new BattleScene();
-
-    if (initialSnapshot) {
-      this.scene.syncState(initialSnapshot, []);
-    }
-
-    const width = initialSnapshot?.arenaWidth ?? DEFAULT_ARENA_WIDTH;
-    const height = initialSnapshot?.arenaHeight ?? DEFAULT_ARENA_HEIGHT;
-
-    this.game = new Phaser.Game({
-      type: Phaser.AUTO,
-      parent: container,
-      width,
-      height,
-      backgroundColor: '#0b1120',
-      pixelArt: true,
-      antialias: false,
-      roundPixels: true,
-      scale: {
-        mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH,
-      },
-      scene: [this.scene],
-    });
+    this.scene3d = new Battlefield3DScene(container, initialSnapshot);
   }
 
   public syncState(snapshot: CombatSnapshot, events: CombatEvent[]): void {
-    if (this.destroyed) return;
-    this.scene.syncState(snapshot, events);
+    if (this.destroyed || !this.scene3d) return;
+    this.scene3d.syncState(snapshot, events);
   }
 
   public getPointerState(): PointerWorldState {
-    if (this.destroyed) {
+    if (this.destroyed || !this.scene3d) {
       return {
         x: DEFAULT_ARENA_WIDTH / 2,
         y: DEFAULT_ARENA_HEIGHT / 2,
@@ -59,15 +32,28 @@ export class BattlefieldController {
         rightDown: false,
       };
     }
-    return this.scene.getPointerState();
+    return this.scene3d.getPointerState();
+  }
+
+  public setCameraMode(mode: CameraMode): void {
+    this.cameraMode = mode;
+    if (this.destroyed || !this.scene3d) return;
+    this.scene3d.setCameraMode(mode);
+  }
+
+  public getCameraMode(): CameraMode {
+    if (this.destroyed || !this.scene3d) {
+      return this.cameraMode;
+    }
+    return this.scene3d.getCameraMode();
   }
 
   public destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    if (this.game) {
-      this.game.destroy(true);
-      this.game = null;
+    if (this.scene3d) {
+      this.scene3d.destroy();
+      this.scene3d = null;
     }
   }
 }

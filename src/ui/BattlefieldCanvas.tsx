@@ -2,24 +2,30 @@ import { useEffect, useRef } from 'react';
 import type { MutableRefObject } from 'react';
 import type { CombatSnapshot } from '../core/types/combat';
 import { BattlefieldController } from '../game/BattlefieldController';
+import type { CameraMode } from '../game/BattlefieldController';
 
 export interface BattlefieldCanvasProps {
   initialSnapshot: CombatSnapshot;
   controllerRef: MutableRefObject<BattlefieldController | null>;
+  cameraMode?: CameraMode;
 }
 
 export function BattlefieldCanvas({
   initialSnapshot,
   controllerRef,
+  cameraMode = 'tactical',
 }: BattlefieldCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const initialSnapshotRef = useRef<CombatSnapshot>(initialSnapshot);
+  const cameraModeRef = useRef<CameraMode>(cameraMode);
+  cameraModeRef.current = cameraMode;
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const controller = new BattlefieldController(container, initialSnapshotRef.current);
+    controller.setCameraMode(cameraModeRef.current);
     controllerRef.current = controller;
 
     return () => {
@@ -29,6 +35,10 @@ export function BattlefieldCanvas({
       }
     };
   }, [controllerRef]);
+
+  useEffect(() => {
+    controllerRef.current?.setCameraMode(cameraMode);
+  }, [cameraMode, controllerRef]);
 
   return (
     <div

@@ -25,7 +25,7 @@ const LOG_STYLES: Record<CombatLogItem['kind'], string> = {
   system: 'border-slate-700/70 bg-slate-900/70 text-slate-300',
 };
 
-const CONTROL_HINTS: Array<{ key: string; label: string }> = [
+const CONTROL_HINTS: Array<{ key: string; label: string; spanFull?: boolean }> = [
   { key: 'WASD', label: '移動' },
   { key: 'LMB', label: '三連斬' },
   { key: 'Space', label: '翻滾' },
@@ -34,6 +34,7 @@ const CONTROL_HINTS: Array<{ key: string; label: string }> = [
   { key: 'C / X / V', label: '兵團指令' },
   { key: 'F', label: '兵團特技' },
   { key: '1 / 2', label: '切換陣型' },
+  { key: 'Tab', label: '切換 3D 俯視 / TPS 視角', spanFull: true },
 ];
 
 function formatTime(sec: number): string {
@@ -171,7 +172,9 @@ export function SideIntelPanel({
           {CONTROL_HINTS.map((hint) => (
             <div
               key={hint.key}
-              className="flex items-center justify-between rounded bg-slate-950/80 px-2 py-1 ring-1 ring-inset ring-slate-800/80"
+              className={`flex items-center justify-between rounded bg-slate-950/80 px-2 py-1 ring-1 ring-inset ring-slate-800/80 ${
+                hint.spanFull ? 'col-span-2' : ''
+              }`}
             >
               <kbd className="font-mono font-bold text-cyan-300">{hint.key}</kbd>
               <span className="text-slate-300">{hint.label}</span>

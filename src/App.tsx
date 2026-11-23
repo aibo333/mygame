@@ -23,7 +23,11 @@ import type {
   RegimentOrder,
   RegimentType,
 } from './core/types/combat';
-import type { BattlefieldController, PointerWorldState } from './game/BattlefieldController';
+import type {
+  BattlefieldController,
+  CameraMode,
+  PointerWorldState,
+} from './game/BattlefieldController';
 import { BattlefieldCanvas } from './ui/BattlefieldCanvas';
 import { HeroHud } from './ui/HeroHud';
 import { RegimentHud } from './ui/RegimentHud';
@@ -171,6 +175,7 @@ export default function App() {
   const [selectedWaveIdx, setSelectedWaveIdx] = useState(0);
   const [selectedRegiment, setSelectedRegiment] = useState<RegimentType>('shieldmen');
   const [isPaused, setIsPaused] = useState(false);
+  const [cameraMode, setCameraMode] = useState<CameraMode>('tactical');
 
   const engineRef = useRef<CombatEngine | null>(null);
   if (engineRef.current === null) {
@@ -182,6 +187,7 @@ export default function App() {
 
   const controllerRef = useRef<BattlefieldController | null>(null);
   const isPausedRef = useRef(isPaused);
+  const cameraModeRef = useRef<CameraMode>(cameraMode);
   const logSerialRef = useRef(1);
 
   // Live input refs (zero React re-renders on key/mouse events)
@@ -202,6 +208,19 @@ export default function App() {
   useEffect(() => {
     isPausedRef.current = isPaused;
   }, [isPaused]);
+
+  useEffect(() => {
+    cameraModeRef.current = cameraMode;
+  }, [cameraMode]);
+
+  const toggleCameraMode = useCallback(() => {
+    setCameraMode((prev) => {
+      const next: CameraMode = prev === 'tactical' ? 'tps' : 'tactical';
+      cameraModeRef.current = next;
+      controllerRef.current?.setCameraMode(next);
+      return next;
+    });
+  }, []);
 
   const appendLogs = useCallback((newItems: CombatLogItem[]) => {
     if (newItems.length === 0) return;
@@ -243,6 +262,7 @@ export default function App() {
       logSerialRef.current += 1;
       setLogs([createWaveStartLog(waveIdx, regimentType, logSerialRef.current)]);
       controllerRef.current?.syncState(initialSnap, []);
+      controllerRef.current?.setCameraMode(cameraModeRef.current);
     },
     [],
   );
@@ -427,9 +447,10 @@ export default function App() {
 
       const code = event.code;
 
-      // Prevent browser scrolling on Space & Arrow keys
+      // Prevent browser scrolling / focus cycling on Space, Tab & Arrow keys
       if (
         code === 'Space' ||
+        code === 'Tab' ||
         code === 'ArrowUp' ||
         code === 'ArrowDown' ||
         code === 'ArrowLeft' ||
@@ -441,6 +462,11 @@ export default function App() {
       heldKeysRef.current.add(code);
 
       if (event.repeat) return;
+
+      if (code === 'Tab') {
+        toggleCameraMode();
+        return;
+      }
 
       if (code === 'KeyP') {
         setIsPaused((prev) => !prev);
@@ -497,7 +523,7 @@ export default function App() {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [dispatchRegimentCommand, getPointerOrDefault]);
+  }, [dispatchRegimentCommand, getPointerOrDefault, toggleCameraMode]);
 
   const currentWaveDef = PHASE1_WAVES[selectedWaveIdx] ?? PHASE1_WAVES[0];
   const hasNextWave = selectedWaveIdx < PHASE1_WAVES.length - 1;
@@ -524,7 +550,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-sm font-black tracking-wide text-white">
-                戰意守城原型 · Phase 1 (v0.2)
+                戰意守城原型 · 3D (Three.js)
               </h1>
               <div className="flex items-center gap-2 text-[11px] text-slate-400 tabular-nums">
                 <span className="font-semibold text-amber-300">W{snapshot.waveNumber}</span>
@@ -623,6 +649,24 @@ export default function App() {
               })}
             </div>
 
+            {/* Camera Mode Toggle (Tab) */}
+            <button
+              type="button"
+              onClick={toggleCameraMode}
+              title="切換視角：3D 俯視 / 肩後 TPS (Tab)"
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                cameraMode === 'tps'
+                  ? 'border-indigo-400/60 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30'
+                  : 'border-cyan-500/40 bg-cyan-950/50 text-cyan-200 hover:border-cyan-400/60 hover:bg-cyan-900/50'
+              }`}
+            >
+              <span aria-hidden="true">🎥</span>
+              <span>{cameraMode === 'tactical' ? '3D 俯視' : '肩後 TPS'}</span>
+              <kbd className="rounded bg-slate-950/70 px-1 py-0.5 font-mono text-[10px] text-slate-300">
+                Tab
+              </kbd>
+            </button>
+
             {/* Pause / Resume (P) */}
             <button
               type="button"
@@ -663,6 +707,7 @@ export default function App() {
             <BattlefieldCanvas
               initialSnapshot={snapshot}
               controllerRef={controllerRef}
+              cameraMode={cameraMode}
             />
 
             {/* Pause Overlay */}
