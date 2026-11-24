@@ -1,8 +1,18 @@
-# mygame — 復古都市戰術動作原型（Godot 4）
+# mygame — 裝甲列車撤離戰線（Godot 4）
 
-> **Kenney Retro Urban Kit 模組化復古都市街區 × 現成 3D 動漫角色（SummerCuteness） × Adobe Mixamo 真人動捕骨骼重定向（Godot 4 `SkeletonProfileHumanoid`）**，採 **GitHub 純原始碼 ＋ Google Drive 外部素材包** 異地開發架構。
+> **每局隨機都市街區 × 裝甲火車移動基地 × 限時任務搜刮與屍潮防禦 × 撤離周回養成（收集 NPC 乘員／強化火車）**
 >
-> *(歷史原型封存標籤：`v0.2-web-prototype` 為早期 Three.js 網頁版；`v0.3-medieval-godot-prototype` 為中世紀戰意 TPS 原型。)*
+> 技術管線採用 **Godot 4** × **Kenney Retro Urban Kit 模組化街區** × **現成 3D 人形角色與 Adobe Mixamo 動捕骨骼重定向（`SkeletonProfileHumanoid`）**，並以 **GitHub 純原始碼 ＋ Google Drive 外部素材包** 進行異地開發。
+>
+> - **完整企劃書**：[docs/GDD.md](docs/GDD.md) ｜ **領域名詞表**：[GLOSSARY.md](GLOSSARY.md) ｜ **架構決策**：[ADR-0005](docs/adr/0005-gameplay-pivot-train-extraction-horde-and-external-assets.md) ｜ **素材清單**：[ASSETS.md](ASSETS.md)
+> - *(歷史原型封存標籤：`v0.2-web-prototype` 為早期 Three.js 網頁版；`v0.3-medieval-godot-prototype` 為中世紀戰意 TPS 原型。)*
+
+## 核心玩法概覽
+
+- **每局隨機地圖**：由 Kenney Retro Urban Kit 模組化街區區塊依 Seed 生成道路、工廠、商舖、公園與鐵軌停靠月台。
+- **裝甲火車基地**：停駐地圖邊緣作為出發安全點、隨身物資暫存倉、防禦砲塔陣地與唯一撤離載具。
+- **限時任務 × 屍潮撤離**：在倒數計時與逐步升溫的屍潮壓力下搜刮資源、完成主線任務並守住發車倒數撤離。
+- **周回養成要素**：透過局內救援與物資回收，永久**收集並編組 NPC 乘員**（砲手、輪機師、醫護、偵察、軍需）及**強化裝甲火車**（裝甲、自動砲塔、鍋爐引擎、軍械與貨倉）。
 
 ---
 
@@ -73,3 +83,12 @@
 - **互動搜刮**：靠近青藍色互動圓環按住 `E` 或 `F`
 - **鏡頭控制**：`O` 切換 Zomboid 正交等角／RO 透視、`Y` 切換鎖定跟隨／自由平移、`滾輪`縮放、`中鍵拖曳`／`方向鍵`移鏡、`C`/`Home` 回到角色
 - **右下角檢視台**：可直接點擊原地循環預覽各項 Mixamo 動捕動作。
+
+---
+
+## 開發進度與路線圖（詳見 [docs/GDD.md](docs/GDD.md)）
+- **Phase 1（已完成）**：Godot 4 基礎架構、Kenney 都市街區、單人角色 × Mixamo 骨骼重定向、雙視角切換、GitHub × Google Drive 碼圖分離流程。
+- **Phase 2（進行中規劃）**：Seed 驅動隨機街區生成器、裝甲火車基地地標與登車／暫存區。
+- **Phase 3**：限時倒數、喪屍群 AI 與漸進式屍潮波次、戰鬥血量／彈藥／火車砲塔支援。
+- **Phase 4**：主線任務（燃料回收／訊號修復／物資奪還）、撤離發車守點與單局結算、受困 NPC 救援事件。
+- **Phase 5**：周回整備介面、本機存檔、NPC 乘員名冊與車廂崗位指派、裝甲火車強化樹。
