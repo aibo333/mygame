@@ -5,12 +5,14 @@ signal character_selected(index: int)
 signal action_preview_requested(action_name: String)
 signal sync_all_toggled(enabled: bool)
 signal camera_lock_toggled()
+signal camera_projection_toggled()
 signal camera_recenter_requested()
 
 var _squad_cards: Array[Dictionary] = []
 var _status_label: Label = null
 var _interact_hint_label: Label = null
 var _camera_btn: Button = null
+var _proj_btn: Button = null
 var _sync_check: CheckButton = null
 var _interactive_panels: Array[Control] = []
 
@@ -53,7 +55,7 @@ func _build_top_bar(root: Control) -> void:
 	panel.add_child(vbox)
 
 	var title := Label.new()
-	title.text = "甲鐵廢墟戰線  //  基礎美術 × 3D小人 × 裝甲列車基地"
+	title.text = "甲鐵廢墟戰線  //  Kenney Retro Urban Kit 復古都市街區原型"
 	title.add_theme_font_size_override("font_size", 16)
 	title.add_theme_color_override("font_color", Color(0.98, 0.94, 0.88))
 	vbox.add_child(title)
@@ -63,13 +65,18 @@ func _build_top_bar(root: Control) -> void:
 	vbox.add_child(row)
 
 	var base_badge := Label.new()
-	base_badge.text = "🚂 基地：甲鐵城號（爐心運轉中）"
+	base_badge.text = "🏙️ 場景：Kenney Retro Urban × SummerCuteness × Mixamo 真人動捕"
 	base_badge.add_theme_font_size_override("font_size", 13)
-	base_badge.add_theme_color_override("font_color", Color(1.0, 0.72, 0.38))
+	base_badge.add_theme_color_override("font_color", Color(1.0, 0.78, 0.44))
 	row.add_child(base_badge)
 
+	_proj_btn = Button.new()
+	_proj_btn.text = "📽️ 視角：Zomboid 正交等角 [O]"
+	_proj_btn.pressed.connect(func(): camera_projection_toggled.emit())
+	row.add_child(_proj_btn)
+
 	_camera_btn = Button.new()
-	_camera_btn.text = "🎥 LOL俯瞰：鎖定跟隨 [Y]"
+	_camera_btn.text = "🎥 鎖定跟隨 [Y]"
 	_camera_btn.pressed.connect(func(): camera_lock_toggled.emit())
 	row.add_child(_camera_btn)
 
@@ -79,7 +86,7 @@ func _build_top_bar(root: Control) -> void:
 	row.add_child(recenter_btn)
 
 	_status_label = Label.new()
-	_status_label.text = "操作：WASD 或右鍵走路 ｜ 左鍵開槍 ｜ E/F 摸東摸西 ｜ Space 翻滾 ｜ 1/2/3 切換小人 ｜ 滾輪縮放"
+	_status_label.text = "操作：WASD / 右鍵奔跑 ｜ 左鍵開槍 ｜ Space 撲地翻滾 ｜ E/F 互動 ｜ O 切換 Zomboid/RO 鏡頭 ｜ 滾輪縮放"
 	_status_label.add_theme_font_size_override("font_size", 12)
 	_status_label.add_theme_color_override("font_color", Color(0.76, 0.86, 0.96))
 	vbox.add_child(_status_label)
@@ -111,17 +118,18 @@ func _build_squad_bar(root: Control, squad: Array[SquadCharacter]) -> void:
 		vbox.add_child(top_row)
 
 		var key_lbl := Label.new()
-		key_lbl.text = "[%d] %s" % [i + 1, g.display_name]
+		key_lbl.text = "玩家：%s" % g.display_name if squad.size() == 1 else "[%d] %s" % [i + 1, g.display_name]
 		key_lbl.add_theme_font_size_override("font_size", 15)
 		key_lbl.add_theme_color_override("font_color", g.accent_color)
 		key_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		top_row.add_child(key_lbl)
 
-		var pick_btn := Button.new()
-		pick_btn.text = "切換"
-		var idx := i
-		pick_btn.pressed.connect(func(): character_selected.emit(idx))
-		top_row.add_child(pick_btn)
+		if squad.size() > 1:
+			var pick_btn := Button.new()
+			pick_btn.text = "切換"
+			var idx := i
+			pick_btn.pressed.connect(func(): character_selected.emit(idx))
+			top_row.add_child(pick_btn)
 
 		var role_lbl := Label.new()
 		role_lbl.text = "%s · %s" % [g.role_label, g.weapon_label]
@@ -162,7 +170,7 @@ func _build_action_showcase_panel(root: Control) -> void:
 	vbox.add_child(hdr)
 
 	var lbl := Label.new()
-	lbl.text = "🎬 4大基礎動作檢視台"
+	lbl.text = "🎬 Mixamo 動捕動作檢視台"
 	lbl.add_theme_font_size_override("font_size", 14)
 	lbl.add_theme_color_override("font_color", Color(0.94, 0.96, 1.0))
 	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -170,6 +178,7 @@ func _build_action_showcase_panel(root: Control) -> void:
 
 	_sync_check = CheckButton.new()
 	_sync_check.text = "全員同步"
+	_sync_check.visible = false
 	_sync_check.toggled.connect(func(v: bool): sync_all_toggled.emit(v))
 	hdr.add_child(_sync_check)
 
@@ -243,7 +252,12 @@ func update_character_action(char_id: String, action_name: String) -> void:
 
 func set_camera_locked(locked: bool) -> void:
 	if _camera_btn != null:
-		_camera_btn.text = "🎥 LOL俯瞰：鎖定跟隨 [Y]" if locked else "🎥 LOL俯瞰：自由平移 [Y]"
+		_camera_btn.text = "🎥 鎖定跟隨 [Y]" if locked else "🎥 自由平移 [Y]"
+
+
+func set_camera_orthographic(ortho: bool) -> void:
+	if _proj_btn != null:
+		_proj_btn.text = "📽️ 視角：Zomboid 正交等角 [O]" if ortho else "📽️ 視角：RO / HD-2D 透視 [O]"
 
 
 func set_interact_hint(station_label: String) -> void:

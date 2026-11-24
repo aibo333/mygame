@@ -1,335 +1,371 @@
 class_name RuinsBaseWorld
 extends Node3D
 
+# Retro Urban City Block built 100% from Kenney Retro Urban Kit (TILE = 3.2m modular grid!)
+const TILE: float = 3.2
+const KIT: String = "res://assets/packs/kenney_retro_urban/"
+
+var env_root: Node3D = null
+var squad_root: Node3D = null
+var vfx_root: Node3D = null
 var camera_rig: LolCameraController = null
 var hud: SquadHud = null
-var vfx_root: Node3D = null
-var squad_root: Node3D = null
-var env_root: Node3D = null
 
 var squad: Array[SquadCharacter] = []
 var active_index: int = 0
 var sync_all_preview: bool = false
 
-var _station_markers: Array[Dictionary] = []
-var _furnace_lights: Array[OmniLight3D] = []
-var _flicker_lamps: Array[OmniLight3D] = []
-var _time_elapsed: float = 0.0
 var _aim_cursor: MeshInstance3D = null
+var _station_markers: Array[Dictionary] = []
+var _flicker_lamps: Array[OmniLight3D] = []
+var _model_cache: Dictionary = {}
+var _time_elapsed: float = 0.0
 
 
 func _ready() -> void:
-	_build_dusk_environment()
-	_build_ground_and_road()
-	_build_kabaneri_train_base()
-	_build_gfl2_urban_ruins()
-	_build_interactive_stations()
-	_build_aim_cursor()
+	_setup_retro_urban_environment()
+	_setup_world_geometry()
 	_setup_squad_and_camera()
 	_setup_hud()
 
 
-func _build_dusk_environment() -> void:
-	# Girls' Frontline 2 × Kabaneri Cinematic Dusk Atmosphere:
-	# Cool steel-blue twilight sky aloft + warm amber sunset horizon + subtle depth fog + ACES bloom!
+func _setup_retro_urban_environment() -> void:
+	# Warm Late-Afternoon / Retro PS1-PS2 Urban Atmosphere inspired by Kenney Sample.png & Project Zomboid!
+	var we := WorldEnvironment.new()
+	we.name = "RetroUrbanEnvironment"
 	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
+
 	var sky := Sky.new()
 	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.09, 0.13, 0.24)
-	sky_mat.sky_horizon_color = Color(0.76, 0.41, 0.26)
-	sky_mat.ground_bottom_color = Color(0.08, 0.09, 0.12)
-	sky_mat.ground_horizon_color = Color(0.28, 0.20, 0.19)
-	sky_mat.sun_angle_max = 18.0
+	sky_mat.sky_top_color = Color(0.20, 0.24, 0.34)
+	sky_mat.sky_horizon_color = Color(0.66, 0.54, 0.48)
+	sky_mat.ground_bottom_color = Color(0.14, 0.14, 0.17)
+	sky_mat.ground_horizon_color = Color(0.36, 0.32, 0.32)
 	sky.sky_material = sky_mat
 	env.sky = sky
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.22, 0.23, 0.28)
 
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.42, 0.48, 0.64)
-	env.ambient_light_energy = 0.72
+	env.ambient_light_color = Color(0.58, 0.62, 0.74)
+	env.ambient_light_energy = 0.85
 
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 1.05
+	env.tonemap_exposure = 1.06
 	env.glow_enabled = true
-	env.glow_intensity = 0.55
-	env.glow_strength = 0.85
-	env.glow_bloom = 0.24
-	env.glow_hdr_threshold = 1.05
+	env.glow_intensity = 0.36
+	env.glow_bloom = 0.12
 
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.36, 0.28, 0.30)
-	env.fog_density = 0.0052
-	env.fog_aerial_perspective = 0.35
+	env.fog_light_color = Color(0.42, 0.40, 0.46)
+	env.fog_density = 0.0045
+	env.fog_sky_affect = 0.2
 
-	var world_env := WorldEnvironment.new()
-	world_env.name = "DuskWorldEnvironment"
-	world_env.environment = env
-	add_child(world_env)
+	we.environment = env
+	add_child(we)
 
-	# Low-angle Warm Sunset Key Sun (casts long dramatic shadows across ruins & train!)
-	var sunset := DirectionalLight3D.new()
-	sunset.name = "SunsetKeyLight"
-	sunset.light_color = Color(1.0, 0.72, 0.48)
-	sunset.light_energy = 1.65
-	sunset.shadow_enabled = true
-	sunset.directional_shadow_max_distance = 75.0
-	sunset.rotation_degrees = Vector3(-34.0, 38.0, 0.0)
-	add_child(sunset)
+	# Crisp warm late-afternoon sun casting clean architectural shadows across the brick & asphalt!
+	var sun := DirectionalLight3D.new()
+	sun.name = "UrbanSunLight"
+	sun.light_color = Color(1.0, 0.87, 0.72)
+	sun.light_energy = 1.95
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 120.0
+	sun.shadow_bias = 0.03
+	sun.rotation_degrees = Vector3(-44.0, -32.0, 0.0)
+	add_child(sun)
 
-	# Cool Twilight Rim/Fill Light from opposite sky hemisphere
-	var sky_fill := DirectionalLight3D.new()
-	sky_fill.name = "TwilightFillLight"
-	sky_fill.light_color = Color(0.55, 0.70, 1.0)
-	sky_fill.light_energy = 0.48
-	sky_fill.shadow_enabled = false
-	sky_fill.rotation_degrees = Vector3(-52.0, -140.0, 0.0)
-	add_child(sky_fill)
-
-
-func _load_tex(path: String) -> Texture2D:
-	if ResourceLoader.exists(path):
-		return load(path) as Texture2D
-	return null
+	# Cool slate sky rim fill from opposite angle so dark sides stay readable
+	var fill := DirectionalLight3D.new()
+	fill.name = "SkyFillLight"
+	fill.light_color = Color(0.58, 0.70, 0.92)
+	fill.light_energy = 0.55
+	fill.shadow_enabled = false
+	fill.rotation_degrees = Vector3(-35.0, 145.0, 0.0)
+	add_child(fill)
 
 
-func _make_ground_mat(tex_path: String, fallback_col: Color, uv_tile: Vector3, roughness: float = 0.90) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = fallback_col
-	mat.roughness = roughness
-	mat.metallic = 0.04
-	var tex := _load_tex(tex_path)
-	if tex != null:
-		mat.albedo_texture = tex
-		mat.albedo_color = Color.WHITE.lerp(fallback_col, 0.28)
-		mat.uv1_scale = uv_tile
-	return mat
-
-
-func _build_ground_and_road() -> void:
+func _setup_world_geometry() -> void:
 	env_root = Node3D.new()
-	env_root.name = "EnvironmentRoot"
+	env_root.name = "KenneyRetroUrbanDistrict"
 	add_child(env_root)
 
 	vfx_root = Node3D.new()
 	vfx_root.name = "VfxRoot"
 	add_child(vfx_root)
 
-	# Main Cracked Urban Asphalt Boulevard
-	var asphalt_mat := _make_ground_mat("res://assets/textures/env/asphalt_cracked.png", Color(0.42, 0.44, 0.48), Vector3(14.0, 10.0, 1.0), 0.92)
-	_add_static_box(env_root, "MainAsphaltRoad", Vector3(96.0, 0.4, 72.0), Vector3(0.0, -0.2, 0.0), asphalt_mat)
-
-	# Elevated Crushed Gravel Rail Bed along Z = -9.2 (where the Kabaneri Armored Train rests!)
-	var ballast_mat := StandardMaterial3D.new()
-	ballast_mat.albedo_color = Color(0.24, 0.22, 0.23)
-	ballast_mat.roughness = 0.96
-	_add_static_box(env_root, "RailBallastBed", Vector3(92.0, 0.14, 6.2), Vector3(0.0, 0.02, SquadConfig.TRAIN_POSITION.z), ballast_mat)
-
-	# Sidewalk Concrete Apron & Curbs framing the ruined avenue
-	var conc_mat := _make_ground_mat("res://assets/textures/env/ruined_concrete.png", Color(0.55, 0.56, 0.60), Vector3(12.0, 2.0, 1.0), 0.90)
-	_add_static_box(env_root, "NorthSidewalk", Vector3(92.0, 0.22, 6.0), Vector3(0.0, 0.06, -15.5), conc_mat)
-	_add_static_box(env_root, "SouthSidewalk", Vector3(92.0, 0.24, 7.5), Vector3(0.0, 0.07, 17.5), conc_mat)
-
-	# Faded Post-Apocalyptic Road Lane Dashes & Plaza Hazard Lines
-	var paint_mat := StandardMaterial3D.new()
-	paint_mat.albedo_color = Color(0.76, 0.66, 0.42, 0.72)
-	paint_mat.roughness = 0.85
-	for i in range(-5, 6):
-		var dash := MeshInstance3D.new()
-		var box := BoxMesh.new()
-		box.size = Vector3(3.2, 0.02, 0.22)
-		dash.mesh = box
-		dash.material_override = paint_mat
-		dash.position = Vector3(float(i) * 6.5, 0.015, 5.4)
-		env_root.add_child(dash)
-
-	# Extended Rail Tracks running east/west off into the ruined horizon
-	var rail_mat := StandardMaterial3D.new()
-	rail_mat.albedo_color = Color(0.26, 0.24, 0.24)
-	rail_mat.metallic = 0.75
-	rail_mat.roughness = 0.48
-	for side in [-1.0, 1.0]:
-		var rail := MeshInstance3D.new()
-		var rbox := BoxMesh.new()
-		rbox.size = Vector3(92.0, 0.14, 0.16)
-		rail.mesh = rbox
-		rail.material_override = rail_mat
-		rail.position = Vector3(0.0, 0.12, SquadConfig.TRAIN_POSITION.z + side * 1.56)
-		env_root.add_child(rail)
+	_build_ground_collider()
+	_build_kenney_roads_and_terrain()
+	_build_kenney_industrial_factory_block()
+	_build_kenney_brick_workshop_and_yard()
+	_build_kenney_east_apartment_and_garage()
+	_build_kenney_street_props_and_park()
+	_build_interactive_stations()
+	_build_aim_cursor()
 
 
-func _build_kabaneri_train_base() -> void:
-	var train_holder := Node3D.new()
-	train_holder.name = "KabaneriArmoredTrainBase"
-	train_holder.position = SquadConfig.TRAIN_POSITION
-	env_root.add_child(train_holder)
-
-	var train_scene := load("res://assets/models/train/kabaneri_armored_train.glb")
-	if train_scene is PackedScene:
-		var inst := (train_scene as PackedScene).instantiate()
-		inst.name = "TrainModel"
-		train_holder.add_child(inst)
-	else:
-		push_warning("RuinsBaseWorld: Could not load kabaneri_armored_train.glb")
-
-	# Train invisible blocker collider so characters don't clip through the armored hull
-	_add_invisible_collider(train_holder, "TrainHullCollider", Vector3(33.5, 5.5, 4.4), Vector3(-0.8, 2.75, 0.0))
-
-	# Pulsing Kabaneri Locomotive Furnace Core Orange Glow Light
-	var furnace_light := OmniLight3D.new()
-	furnace_light.name = "FurnaceCoreLight"
-	furnace_light.light_color = Color(1.0, 0.42, 0.12)
-	furnace_light.light_energy = 4.5
-	furnace_light.omni_range = 12.0
-	furnace_light.position = Vector3(10.3, 2.8, 3.1)
-	train_holder.add_child(furnace_light)
-	_furnace_lights.append(furnace_light)
-
-	# Warm Amber Interior Light inside the Open Workshop Base Bay
-	var bay_light := OmniLight3D.new()
-	bay_light.name = "WorkshopBayLight"
-	bay_light.light_color = Color(1.0, 0.72, 0.36)
-	bay_light.light_energy = 3.8
-	bay_light.omni_range = 11.5
-	bay_light.position = Vector3(-2.6, 3.6, 2.6)
-	train_holder.add_child(bay_light)
-	_furnace_lights.append(bay_light)
-
-	# Twin Locomotive High-Intensity Searchlight SpotLights sweeping east across the ruins!
-	for side in [-1.0, 1.0]:
-		var spot := SpotLight3D.new()
-		spot.name = "TrainHeadlight_%s" % ("L" if side < 0 else "R")
-		spot.light_color = Color(1.0, 0.90, 0.68)
-		spot.light_energy = 8.5
-		spot.spot_range = 34.0
-		spot.spot_angle = 26.0
-		spot.spot_attenuation = 1.2
-		spot.position = Vector3(14.5, 3.4, side * 1.15)
-		spot.rotation_degrees = Vector3(-8.0, -90.0, 0.0)
-		train_holder.add_child(spot)
-
-	# Billowing Steam & Glowing Ember Particles from the Twin Armored Smokestacks!
-	for sx in [12.3, 10.4]:
-		_add_smokestack_particles(train_holder, Vector3(sx, 6.2, 0.0))
+func _build_ground_collider() -> void:
+	# Invisible solid collision floor under the entire Kenney tile grid
+	_add_invisible_collider(env_root, "MainGroundCollider", Vector3(96.0, 0.4, 96.0), Vector3(0.0, -0.2, 0.0))
 
 
-func _add_smokestack_particles(parent: Node3D, origin: Vector3) -> void:
-	var steam := CPUParticles3D.new()
-	steam.name = "SteamPlume"
-	steam.position = origin
-	steam.amount = 24
-	steam.lifetime = 2.8
-	steam.preprocess = 1.5
-	steam.direction = Vector3(-0.35, 1.0, -0.15).normalized()
-	steam.spread = 22.0
-	steam.initial_velocity_min = 1.8
-	steam.initial_velocity_max = 3.4
-	steam.gravity = Vector3(-0.8, 0.5, 0.0)
-	steam.scale_amount_min = 0.55
-	steam.scale_amount_max = 1.65
+func _spawn_kenney(
+	asset_name: String,
+	gx: float,
+	gy: float,
+	gz: float,
+	rot_y_deg: float = 0.0,
+	extra_scale: float = 1.0,
+	collider_tiles: Vector3 = Vector3.ZERO
+) -> Node3D:
+	var path: String = KIT + asset_name + ".glb"
+	var packed: PackedScene = _model_cache.get(path, null) as PackedScene
+	if packed == null and ResourceLoader.exists(path):
+		packed = load(path) as PackedScene
+		_model_cache[path] = packed
 
-	var sph := SphereMesh.new()
-	sph.radius = 0.38
-	sph.height = 0.76
-	sph.radial_segments = 8
-	sph.rings = 4
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(0.68, 0.64, 0.66, 0.34)
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	sph.material = mat
-	steam.mesh = sph
-	parent.add_child(steam)
-
-
-func _spawn_glb_prop(path: String, p_name: String, pos: Vector3, rot_y_deg: float, prop_scale: float = 1.0, collider_size: Vector3 = Vector3.ZERO) -> Node3D:
 	var holder := Node3D.new()
-	holder.name = p_name
-	holder.position = pos
+	holder.name = "%s_%d_%d" % [asset_name, int(round(gx * 10)), int(round(gz * 10))]
+	holder.position = Vector3(gx * TILE, gy * TILE, gz * TILE)
 	holder.rotation_degrees = Vector3(0.0, rot_y_deg, 0.0)
-	holder.scale = Vector3.ONE * prop_scale
 	env_root.add_child(holder)
 
-	var res := load(path)
-	if res is PackedScene:
-		holder.add_child((res as PackedScene).instantiate())
+	if packed != null:
+		var inst := packed.instantiate()
+		if inst is Node3D:
+			(inst as Node3D).scale = Vector3.ONE * (TILE * extra_scale)
+		holder.add_child(inst)
+	else:
+		push_warning("RuinsBaseWorld: Missing Kenney GLB %s" % path)
 
-	if collider_size.length_squared() > 0.01:
-		_add_invisible_collider(holder, p_name + "_Col", collider_size, Vector3(0.0, collider_size.y * 0.5, 0.0))
+	if collider_tiles.length_squared() > 0.001:
+		var csize := collider_tiles * TILE
+		_add_invisible_collider(holder, holder.name + "_Col", csize, Vector3(0.0, csize.y * 0.5, 0.0))
+
 	return holder
 
 
-func _build_gfl2_urban_ruins() -> void:
-	var bldg_a := "res://assets/models/ruins/building_ruin_a.glb"
-	var bldg_b := "res://assets/models/ruins/building_ruin_b.glb"
-	var overpass := "res://assets/models/ruins/overpass_pillar.glb"
-	var car := "res://assets/models/ruins/wrecked_car.glb"
-	var cover := "res://assets/models/ruins/tactical_cover.glb"
-	var lamp := "res://assets/models/ruins/streetlight_broken.glb"
+func _build_kenney_roads_and_terrain() -> void:
+	# 16 x 12 Modular Retro Urban Grid (gx = -8..+7, gz = -5..+6)
+	# Main East-West Asphalt Avenue along gz = +1 (north lane) and gz = +2 (south lane)
+	# North-South Cross Street / Loading Access along gx = +2 (west lane) and gx = +3 (east lane)
+	for gx in range(-8, 8):
+		for gz in range(-5, 7):
+			var on_ew_road: bool = (gz == 1 or gz == 2)
+			var on_ns_road: bool = (gx == 2 or gx == 3) and gz >= -4
 
-	# Northern Ruined City Skyline Backdrop (behind the Kabaneri Train!)
-	_spawn_glb_prop(bldg_a, "NorthRuin_West", Vector3(-22.0, 0.0, -20.5), 4.0, 1.25)
-	_spawn_glb_prop(bldg_b, "NorthRuin_MidW", Vector3(-9.5, 0.0, -21.5), -6.0, 1.30)
-	_spawn_glb_prop(bldg_a, "NorthRuin_MidE", Vector3(6.5, 0.0, -21.0), 178.0, 1.20)
-	_spawn_glb_prop(bldg_b, "NorthRuin_East", Vector3(21.0, 0.0, -20.5), 10.0, 1.35)
+			if on_ew_road and on_ns_road:
+				# Crisp intersection asphalt center
+				_spawn_kenney("road-asphalt-center", gx, 0.0, gz)
+			elif on_ew_road:
+				# East-West asphalt avenue with raised curbs on north (gz=1) & south (gz=2)
+				if gz == 1:
+					_spawn_kenney("road-asphalt-side", gx, 0.0, gz, 180.0)
+				else:
+					_spawn_kenney("road-asphalt-side", gx, 0.0, gz, 0.0)
+			elif on_ns_road:
+				# North-South cross-street
+				if gx == 2:
+					_spawn_kenney("road-asphalt-side", gx, 0.0, gz, 90.0)
+				else:
+					_spawn_kenney("road-asphalt-side", gx, 0.0, gz, -90.0)
+			elif gz >= 4 and gx <= -3:
+				# South-West autumn grass & dirt corner lot (classic Kenney / Zomboid neighborhood edge!)
+				if gx == -3:
+					_spawn_kenney("road-dirt-side", gx, 0.0, gz, 90.0)
+				elif gz == 4:
+					_spawn_kenney("road-dirt-side", gx, 0.0, gz, 180.0)
+				else:
+					_spawn_kenney("grass", gx, 0.0, gz)
+			elif gz >= 5 and gx >= 5:
+				# South-East grassy park corner
+				_spawn_kenney("grass", gx, 0.0, gz)
+			else:
+				# Concrete urban sidewalk & industrial concrete yard slabs
+				var is_damaged: bool = ((gx * 7 + gz * 13) % 11 == 0) and gz >= 0
+				_spawn_kenney("road-asphalt-damaged" if is_damaged else "road-asphalt-pavement", gx, 0.0, gz)
 
-	# Towering Collapsed Highway Viaduct on the East Flank (iconic GFL2 ruin landmark!)
-	_spawn_glb_prop(overpass, "HighwayOverpass_East", Vector3(26.5, 0.0, 3.5), -96.0, 1.15, Vector3(3.2, 6.0, 3.0))
-	_spawn_glb_prop(bldg_b, "WestFlankRuin", Vector3(-28.5, 0.0, 5.0), 86.0, 1.18, Vector3(7.0, 7.0, 5.5))
 
-	# Foreground/South Low Ruins Silhouette (kept low/wide so LoL camera view is NEVER obstructed!)
-	_spawn_glb_prop(wrecked_car, "WreckedCar_West", Vector3(-16.5, 0.0, 9.2), 28.0, 1.05, Vector3(4.2, 1.6, 2.0))
-	_spawn_glb_prop(wrecked_car, "WreckedCar_East", Vector3(15.2, 0.0, 1.8), -142.0, 1.0, Vector3(4.2, 1.6, 2.0))
-	_spawn_glb_prop(wrecked_car, "WreckedCar_South", Vector3(2.8, 0.0, 13.8), 14.0, 1.0, Vector3(4.2, 1.6, 2.0))
+func _build_kenney_industrial_factory_block() -> void:
+	# Hero Landmark: Multi-story Sage-Green Sawtooth-Roof Industrial Factory (inspired directly by Kenney Sample.png!)
+	# Footprint: gx = -6..-3, gz = -4..-2 (back-left dominant skyline!)
+	for gx in range(-6, -2):
+		for gz in range(-4, -1):
+			# Ground floor (gy = 0)
+			var ground_piece := "wall-b"
+			var rot := 180.0
+			if gz == -2:
+				ground_piece = "wall-b-garage" if (gx == -5 or gx == -4) else "wall-b-door"
+			elif gx == -3:
+				ground_piece = "wall-b-window"
+				rot = -90.0
+			_spawn_kenney(ground_piece, gx, 0.0, gz, rot, 1.0, Vector3(1.0, 1.0, 1.0))
 
-	# Tactical Cover Clusters (Concrete Jersey Barriers + Sandbags + Barrels)
-	_spawn_glb_prop(cover, "Cover_WestPlaza", Vector3(-9.5, 0.0, 1.8), 12.0, 1.0, Vector3(4.8, 1.2, 1.2))
-	_spawn_glb_prop(cover, "Cover_CenterLeft", Vector3(-4.2, 0.0, 7.6), -8.0, 1.0, Vector3(4.8, 1.2, 1.2))
-	_spawn_glb_prop(cover, "Cover_CenterRight", Vector3(7.5, 0.0, 6.8), 162.0, 1.0, Vector3(4.8, 1.2, 1.2))
-	_spawn_glb_prop(cover, "Cover_EastRoad", Vector3(13.5, 0.0, 11.2), -24.0, 1.0, Vector3(4.8, 1.2, 1.2))
+			# Second floor (gy = 1) with industrial windows facing the street
+			var f2_piece := "wall-b-window" if (gz == -2 or gx == -3) else "wall-b"
+			var f2_rot := 180.0 if gz == -2 else (-90.0 if gx == -3 else 0.0)
+			_spawn_kenney(f2_piece, gx, 1.0, gz, f2_rot)
 
-	# Bent Post-Apocalyptic Streetlights (two still casting warm flickering amber cones!)
-	var lamp_positions: Array[Dictionary] = [
-		{"pos": Vector3(-13.8, 0.0, -3.2), "rot": 14.0, "lit": true},
-		{"pos": Vector3(11.4, 0.0, -3.0), "rot": -162.0, "lit": true},
-		{"pos": Vector3(-12.0, 0.0, 14.6), "rot": -75.0, "lit": false},
-		{"pos": Vector3(11.5, 0.0, 14.8), "rot": -105.0, "lit": false},
+			# Iconic Sawtooth Slanted Metal Roofs (gy = 2)
+			var roof_piece := "wall-b-roof-slant-detailed" if (gx % 2 == 0) else "wall-b-roof-slant"
+			_spawn_kenney(roof_piece, gx, 2.0, gz, 180.0)
+
+	# Towering 3rd-story penthouse monitor roof on rear factory spine
+	_spawn_kenney("wall-b-window", -5, 2.0, -4, 180.0)
+	_spawn_kenney("wall-b-roof-detailed", -5, 3.0, -4, 180.0)
+
+	# Iconic 3-Story Steel Scaffolding Tower right behind the factory corner (just like Sample.png!)
+	for gy in range(0, 3):
+		_spawn_kenney("scaffolding-structure", -2, float(gy), -4, 0.0, 1.0, Vector3(0.9, 1.0, 0.9) if gy == 0 else Vector3.ZERO)
+		_spawn_kenney("scaffolding-floor", -2, float(gy + 1), -4, 0.0)
+	_spawn_kenney("detail-barrier-type-a", -3, 2.0, -2, 0.0)
+
+	# Side industrial awning over factory loading door
+	_spawn_kenney("detail-awning-wide", -3, 0.88, -1.45, 0.0)
+
+
+func _build_kenney_brick_workshop_and_yard() -> void:
+	# Gritty Red-Brick Corner Workshop & Loading Yard (gx = -2..+1, gz = -3..-1)
+	# 2-story Red-Brick Garage / Corner Watchtower facing the avenue
+	_spawn_kenney("wall-a-garage", -2, 0.0, -1, 180.0, 1.0, Vector3(1.0, 1.0, 1.0))
+	_spawn_kenney("wall-a-window", -2, 1.0, -1, 180.0)
+	_spawn_kenney("wall-a-roof-detailed", -2, 2.0, -1, 90.0)
+	# Fire escape balcony & iron ladder on brick corner!
+	_spawn_kenney("balcony-type-a", -2, 1.0, -0.45, 180.0)
+	_spawn_kenney("balcony-ladder-bottom", -2.55, 0.0, -1.0, 90.0)
+
+	# Adjacent single-story brick storefront garage bay
+	_spawn_kenney("wall-a-garage", -1, 0.0, -1, 180.0, 1.0, Vector3(1.0, 1.0, 1.0))
+	_spawn_kenney("wall-a-roof-slant", -1, 1.0, -1, 180.0)
+
+	# Fenced Industrial Loading Yard on gx = 0..+1, gz = -3..-1
+	# Perimeter iron security fences along rear & west yard edge
+	_spawn_kenney("wall-fence", 0, 0.0, -3.45, 0.0, 1.0, Vector3(1.0, 0.6, 0.2))
+	_spawn_kenney("wall-fence", 1, 0.0, -3.45, 0.0, 1.0, Vector3(1.0, 0.6, 0.2))
+	_spawn_kenney("wall-fence", -0.5, 0.0, -2.0, 90.0, 1.0, Vector3(0.2, 0.6, 1.0))
+	_spawn_kenney("wall-fence", -0.5, 0.0, -3.0, 90.0, 1.0, Vector3(0.2, 0.6, 1.0))
+
+	# Parked Teal Cargo Truck & Detached Shipping Container inside the Loading Yard!
+	_spawn_kenney("truck-green", 0.5, 0.0, -2.0, 0.0, 1.0, Vector3(0.9, 1.0, 1.65))
+	_spawn_kenney("truck-green-cargo", 1.8, 0.0, -2.8, 90.0, 1.0, Vector3(1.2, 0.8, 0.85))
+	_spawn_kenney("pallet", 0.5, 0.0, -0.6, 12.0, 0.55)
+	_spawn_kenney("pallet-small", 1.1, 0.0, -0.65, -18.0, 0.55)
+
+	# Covered corrugated metal shelter beside the western yard edge
+	_spawn_kenney("roof-metal-poles", -6, 0.0, -1, 0.0)
+	_spawn_kenney("roof-metal-poles", -7, 0.0, -1, 0.0)
+	_spawn_kenney("detail-bricks-type-a", -6.2, 0.0, -0.4, 25.0)
+	_spawn_kenney("detail-dumpster-open", -1.0, 0.0, -0.1, 180.0, 1.0, Vector3(0.65, 0.6, 0.5))
+
+
+func _build_kenney_east_apartment_and_garage() -> void:
+	# East Block (gx = +4..+6, gz = -4..-1): Red-Brick Corner Townhouse + Sage-Green Auto Garage
+	# Tall 3-story brick apartment corner tower
+	_spawn_kenney("wall-a-door", 4, 0.0, -1, 180.0, 1.0, Vector3(1.0, 1.0, 1.0))
+	_spawn_kenney("wall-a-window", 4, 1.0, -1, 180.0)
+	_spawn_kenney("wall-a-painted", 4, 2.0, -1, 180.0)
+	_spawn_kenney("wall-a-roof-detailed", 4, 3.0, -1, 0.0)
+	_spawn_kenney("balcony-type-a", 4, 1.0, -0.45, 180.0)
+
+	# Connected 2-story brick commercial wing
+	_spawn_kenney("wall-a-window", 5, 0.0, -1, 180.0, 1.0, Vector3(1.0, 1.0, 1.0))
+	_spawn_kenney("wall-a-window", 5, 1.0, -1, 180.0)
+	_spawn_kenney("wall-a-roof", 5, 2.0, -1, 0.0)
+	_spawn_kenney("detail-awning-wide", 5, 0.85, -0.45, 180.0)
+
+	# Rear Sage-Green Auto Garage + Carport Shed
+	_spawn_kenney("wall-b-garage", 4, 0.0, -3, 90.0, 1.0, Vector3(1.0, 1.0, 1.0))
+	_spawn_kenney("wall-b-roof-detailed", 4, 1.0, -3, 90.0)
+	_spawn_kenney("wall-b", 5, 0.0, -3, 180.0, 1.0, Vector3(1.0, 1.0, 1.0))
+	_spawn_kenney("wall-b-roof", 5, 1.0, -3, 90.0)
+	_spawn_kenney("roof-metal-poles", 6, 0.0, -3, 90.0)
+
+	# Grey Delivery Truck parked along the east alley + spare container
+	_spawn_kenney("truck-grey", 5.8, 0.0, -1.8, 90.0, 1.0, Vector3(1.65, 1.0, 0.9))
+	_spawn_kenney("truck-grey-cargo", 6.2, 0.0, -0.2, 0.0, 1.0, Vector3(0.85, 0.8, 1.2))
+	_spawn_kenney("detail-dumpster-closed", 4.6, 0.0, -2.0, 0.0, 1.0, Vector3(0.65, 0.6, 0.5))
+
+
+func _build_kenney_street_props_and_park() -> void:
+	# 1. Tactical Roadblock Checkpoint & Parked Flatbed Truck on the Main Avenue (gz = 1..2)
+	_spawn_kenney("truck-flat", -3.8, 0.0, 1.2, 82.0, 1.0, Vector3(1.6, 1.0, 0.9))
+	_spawn_kenney("detail-barrier-strong-type-a", -3.0, 0.0, 2.1, 12.0, 1.0, Vector3(0.7, 0.4, 0.3))
+	_spawn_kenney("detail-barrier-strong-damaged", -2.2, 0.0, 2.3, -15.0, 1.0, Vector3(0.7, 0.4, 0.3))
+	_spawn_kenney("detail-barrier-type-a", -3.4, 0.0, 0.4, 24.0)
+	_spawn_kenney("detail-beam", -4.6, 0.0, 2.4, 65.0)
+
+	# East Avenue Cover Cluster
+	_spawn_kenney("detail-barrier-strong-type-b", 4.5, 0.0, 2.2, -10.0, 1.0, Vector3(0.7, 0.4, 0.3))
+	_spawn_kenney("detail-block", 5.3, 0.0, 2.1, 8.0, 1.0, Vector3(0.6, 0.5, 0.6))
+	_spawn_kenney("planks", 4.9, 0.0, 0.5, 32.0)
+
+	# 2. Low Foreground Broken Brick Walls, Iron Fences & Covered Bus-Stop Shelter (kept low so camera is NEVER blocked!)
+	_spawn_kenney("wall-broken-type-a", -5, 0.0, 3.4, 0.0, 1.0, Vector3(1.0, 0.5, 0.2))
+	_spawn_kenney("wall-broken-type-b", -4, 0.0, 3.4, 0.0, 1.0, Vector3(1.0, 0.5, 0.2))
+	_spawn_kenney("wall-fence", 0, 0.0, 3.4, 0.0, 1.0, Vector3(1.0, 0.6, 0.2))
+	_spawn_kenney("wall-fence", 1, 0.0, 3.4, 0.0, 1.0, Vector3(1.0, 0.6, 0.2))
+	_spawn_kenney("roof-metal-poles", -6, 0.0, 3.6, 0.0)
+	_spawn_kenney("detail-bench", -6, 0.0, 3.6, 0.0)
+	_spawn_kenney("detail-bench", 0.5, 0.0, 3.1, 180.0)
+
+	# Supply pallets & crates on south-east sidewalk (Station 4!)
+	_spawn_kenney("pallet", 3.5, 0.0, 3.5, 8.0, 0.55)
+	_spawn_kenney("pallet-small", 4.1, 0.0, 3.6, -22.0, 0.55)
+	_spawn_kenney("detail-bricks-type-b", 3.0, 0.0, 4.1, 15.0)
+
+	# 3. Autumn Golden Trees, Dark Pines & Shrubs Framing the Urban Block (iconic Kenney color contrast!)
+	_spawn_kenney("tree-park-large", -7.2, 0.0, -0.5, 15.0, 1.15)
+	_spawn_kenney("tree-large", -5.8, 0.0, 4.8, 40.0, 1.2)
+	_spawn_kenney("tree-pine-large", -4.4, 0.0, 5.2, 10.0, 1.15)
+	_spawn_kenney("tree-shrub", -3.6, 0.0, 4.3, 25.0)
+	_spawn_kenney("tree-large", 6.4, 0.0, -4.2, -30.0, 1.2)
+	_spawn_kenney("tree-park-pine-large", 5.8, 0.0, 4.8, 20.0, 1.15)
+	_spawn_kenney("tree-small", 4.8, 0.0, 4.5, 55.0)
+	_spawn_kenney("tree-large", 0.8, 0.0, -4.4, 75.0, 1.1)
+
+	# 4. Streetlights, Traffic Light & Overhead Power Cables with Warm Dusk Pools of Light!
+	var lamp_specs: Array[Dictionary] = [
+		{"asset": "detail-light-single", "gx": -4.5, "gz": 0.4, "rot": 180.0, "lit": true},
+		{"asset": "detail-light-traffic", "gx": 1.6, "gz": 0.4, "rot": -90.0, "lit": true},
+		{"asset": "detail-light-single", "gx": 4.2, "gz": 0.4, "rot": 180.0, "lit": true},
+		{"asset": "detail-light-double", "gx": -1.5, "gz": 3.2, "rot": 0.0, "lit": true},
+		{"asset": "detail-light-single", "gx": 5.5, "gz": 3.2, "rot": 0.0, "lit": false},
 	]
-	for i in range(lamp_positions.size()):
-		var lp: Dictionary = lamp_positions[i]
-		_spawn_glb_prop(lamp, "StreetLamp_%d" % i, lp["pos"], lp["rot"], 1.0)
-		if bool(lp["lit"]):
-			var l_omni := OmniLight3D.new()
-			l_omni.name = "LampGlow_%d" % i
-			l_omni.light_color = Color(1.0, 0.76, 0.44)
-			l_omni.light_energy = 2.6
-			l_omni.omni_range = 10.5
-			l_omni.position = (lp["pos"] as Vector3) + Vector3(0.0, 5.4, 0.0)
-			env_root.add_child(l_omni)
-			_flicker_lamps.append(l_omni)
+	for i in range(lamp_specs.size()):
+		var ls: Dictionary = lamp_specs[i]
+		_spawn_kenney(str(ls["asset"]), float(ls["gx"]), 0.0, float(ls["gz"]), float(ls["rot"]), 1.25)
+		if bool(ls["lit"]):
+			var light := OmniLight3D.new()
+			light.name = "UrbanLampGlow_%d" % i
+			light.light_color = Color(1.0, 0.80, 0.50)
+			light.light_energy = 2.6
+			light.omni_range = 10.5
+			light.position = Vector3(float(ls["gx"]) * TILE, 3.8, float(ls["gz"]) * TILE)
+			env_root.add_child(light)
+			_flicker_lamps.append(light)
+
+	# Sagging urban power cables slung between factory & east building
+	_spawn_kenney("detail-cables-type-a", 1.5, 1.65, -1.0, 0.0, 1.4)
+	_spawn_kenney("detail-cables-type-b", 3.0, 1.65, -1.0, 0.0, 1.4)
 
 
 func _build_interactive_stations() -> void:
-	var crate_path := "res://assets/models/ruins/supply_crate.glb"
 	for st in SquadConfig.get_interactive_stations():
 		var pos: Vector3 = st["pos"]
-		if bool(st.get("is_crate", false)):
-			_spawn_glb_prop(crate_path, "Station_" + str(st["id"]), pos, randf_range(-25.0, 25.0), 1.05, Vector3(1.3, 0.9, 0.9))
-
-		# Subtle cyan tactical ground ring marking interactive zone ("摸東摸西"點位!)
 		var ring := MeshInstance3D.new()
 		ring.name = "InteractRing_" + str(st["id"])
 		var torus := TorusMesh.new()
-		torus.inner_radius = 1.05
-		torus.outer_radius = 1.16
+		torus.inner_radius = 0.95
+		torus.outer_radius = 1.06
 		torus.rings = 28
 		torus.ring_segments = 8
 		ring.mesh = torus
-		ring.position = Vector3(pos.x, 0.04, pos.z)
+		ring.position = Vector3(pos.x, 0.18, pos.z)
 		var mat := StandardMaterial3D.new()
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		mat.albedo_color = Color(0.28, 0.86, 1.0, 0.65)
+		mat.albedo_color = Color(0.28, 0.88, 1.0, 0.72)
 		mat.emission_enabled = true
-		mat.emission = Color(0.28, 0.86, 1.0)
+		mat.emission = Color(0.28, 0.88, 1.0)
 		mat.emission_energy_multiplier = 1.6
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		ring.material_override = mat
@@ -351,13 +387,13 @@ func _build_aim_cursor() -> void:
 	_aim_cursor.mesh = torus
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(1.0, 0.90, 0.45, 0.85)
+	mat.albedo_color = Color(1.0, 0.90, 0.45, 0.88)
 	mat.emission_enabled = true
 	mat.emission = Color(1.0, 0.85, 0.35)
 	mat.emission_energy_multiplier = 2.0
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_aim_cursor.material_override = mat
-	_aim_cursor.position = Vector3(0.0, 0.05, 0.0)
+	_aim_cursor.position = Vector3(0.0, 0.18, 0.0)
 	add_child(_aim_cursor)
 
 
@@ -381,6 +417,7 @@ func _setup_squad_and_camera() -> void:
 	camera_rig.name = "LolCameraController"
 	add_child(camera_rig)
 	camera_rig.lock_mode_changed.connect(_on_camera_lock_changed)
+	camera_rig.projection_mode_changed.connect(_on_camera_projection_changed)
 
 	select_character(0, true)
 
@@ -394,9 +431,11 @@ func _setup_hud() -> void:
 	hud.action_preview_requested.connect(_on_hud_action_preview)
 	hud.sync_all_toggled.connect(func(enabled: bool): sync_all_preview = enabled)
 	hud.camera_lock_toggled.connect(func(): camera_rig.toggle_camera_lock())
+	hud.camera_projection_toggled.connect(func(): camera_rig.toggle_projection_mode())
 	hud.camera_recenter_requested.connect(func(): camera_rig.recenter_on_target())
 	hud.set_active_character(active_index)
 	hud.set_camera_locked(camera_rig.camera_locked)
+	hud.set_camera_orthographic(camera_rig.is_orthographic)
 
 
 func select_character(idx: int, snap_camera: bool = false) -> void:
@@ -405,7 +444,7 @@ func select_character(idx: int, snap_camera: bool = false) -> void:
 	active_index = clampi(idx, 0, squad.size() - 1)
 	var leader := squad[active_index]
 
-	var follower_offsets: Array[Vector3] = [Vector3(-2.1, 0.0, 1.5), Vector3(2.1, 0.0, 1.5)]
+	var follower_offsets: Array[Vector3] = [Vector3(-2.3, 0.0, 1.5), Vector3(2.3, 0.0, 1.5)]
 	var f_slot := 0
 	for i in range(squad.size()):
 		var g := squad[i]
@@ -464,6 +503,12 @@ func _on_camera_lock_changed(locked: bool) -> void:
 		hud.set_camera_locked(locked)
 
 
+func _on_camera_projection_changed(is_ortho: bool) -> void:
+	if hud != null:
+		hud.set_camera_orthographic(is_ortho)
+		hud.push_status("視角切換為：%s" % ("Zomboid 45° 正交等角" if is_ortho else "RO / HD-2D 透視"))
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		var key := event as InputEventKey
@@ -486,30 +531,35 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _physics_process(delta: float) -> void:
 	_time_elapsed += delta
-	_animate_dusk_lights()
+	_animate_urban_lights()
 
 	if squad.is_empty() or camera_rig == null:
 		return
 
 	var active := get_active_character()
 	var vp := get_viewport()
-	var aim_pos := active.global_position + Vector3.FORWARD * 4.0
+	var aim_pos := active.global_position + Vector3.RIGHT * 4.0
 	if vp != null:
 		aim_pos = camera_rig.raycast_ground(vp.get_mouse_position(), 0.0)
 
 	if _aim_cursor != null:
-		_aim_cursor.global_position = Vector3(aim_pos.x, 0.05, aim_pos.z)
+		_aim_cursor.global_position = Vector3(aim_pos.x, 0.18, aim_pos.z)
 
-	# WASD movement aligned to LoL fixed camera (W = -Z north, S = +Z south, A = -X west, D = +X east)
+	# Align WASD & standee billboards cleanly to active camera angle (works in both 45° Zomboid & 0° RO views!)
+	var axes: Dictionary = camera_rig.get_screen_axes()
+	var cam_right: Vector3 = axes["right"]
+	var cam_fwd: Vector3 = axes["forward"]
+	var cam_yaw: float = float(axes["yaw_rad"])
+
 	var move_in := Vector3.ZERO
 	if Input.is_action_pressed("move_forward") or Input.is_key_pressed(KEY_W):
-		move_in.z -= 1.0
+		move_in += cam_fwd
 	if Input.is_action_pressed("move_back") or Input.is_key_pressed(KEY_S):
-		move_in.z += 1.0
+		move_in -= cam_fwd
 	if Input.is_action_pressed("move_left") or Input.is_key_pressed(KEY_A):
-		move_in.x -= 1.0
+		move_in -= cam_right
 	if Input.is_action_pressed("move_right") or Input.is_key_pressed(KEY_D):
-		move_in.x += 1.0
+		move_in += cam_right
 
 	var mouse_over_ui: bool = hud != null and hud.is_mouse_over_controls()
 	var want_shoot: bool = (not mouse_over_ui) and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
@@ -522,6 +572,7 @@ func _physics_process(delta: float) -> void:
 
 	for i in range(squad.size()):
 		var g := squad[i]
+		g.set_camera_yaw(cam_yaw)
 		if i == active_index:
 			g.update_character(delta, move_in, aim_pos, want_shoot, want_interact, want_roll, nearest_label)
 		else:
@@ -529,7 +580,7 @@ func _physics_process(delta: float) -> void:
 
 
 func _find_nearest_station_label(pos: Vector3) -> String:
-	var best_dist := 3.4
+	var best_dist := 3.6
 	var best_label := ""
 	for st in _station_markers:
 		var spos: Vector3 = st["pos"]
@@ -540,17 +591,12 @@ func _find_nearest_station_label(pos: Vector3) -> String:
 	return best_label
 
 
-func _animate_dusk_lights() -> void:
-	# Subtle Kabaneri furnace pulse & broken dusk streetlight flicker
-	for i in range(_furnace_lights.size()):
-		var l := _furnace_lights[i]
-		if is_instance_valid(l):
-			l.light_energy = (4.3 if i == 0 else 3.7) + sin(_time_elapsed * 4.2 + float(i) * 1.7) * 0.45
+func _animate_urban_lights() -> void:
 	for i in range(_flicker_lamps.size()):
 		var f := _flicker_lamps[i]
 		if is_instance_valid(f):
-			var wave := sin(_time_elapsed * 13.0 + float(i) * 3.1) * sin(_time_elapsed * 3.7)
-			f.light_energy = 1.4 if wave > 0.72 else 2.6
+			var wave := sin(_time_elapsed * 11.0 + float(i) * 2.9) * sin(_time_elapsed * 3.1)
+			f.light_energy = 1.6 if wave > 0.78 else 2.6
 
 
 func _spawn_move_ping(pos: Vector3) -> void:
@@ -570,35 +616,13 @@ func _spawn_move_ping(pos: Vector3) -> void:
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	ping.material_override = mat
 	vfx_root.add_child(ping)
-	ping.global_position = Vector3(pos.x, 0.05, pos.z)
+	ping.global_position = Vector3(pos.x, 0.18, pos.z)
 
 	var tw := ping.create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(ping, "scale", Vector3.ONE * 2.2, 0.28)
 	tw.tween_property(mat, "albedo_color:a", 0.0, 0.28)
 	tw.chain().tween_callback(ping.queue_free)
-
-
-func _add_static_box(parent: Node3D, node_name: String, size: Vector3, pos: Vector3, mat: Material) -> void:
-	var body := StaticBody3D.new()
-	body.name = node_name
-	body.collision_layer = 1
-	body.collision_mask = 0
-	body.position = pos
-	parent.add_child(body)
-
-	var col := CollisionShape3D.new()
-	var shape := BoxShape3D.new()
-	shape.size = size
-	col.shape = shape
-	body.add_child(col)
-
-	var mi := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	mi.mesh = box
-	mi.material_override = mat
-	body.add_child(mi)
 
 
 func _add_invisible_collider(parent: Node3D, node_name: String, size: Vector3, pos: Vector3) -> void:

@@ -2,13 +2,14 @@ class_name LolCameraController
 extends Node3D
 
 signal lock_mode_changed(locked: bool)
+signal projection_mode_changed(is_ortho: bool)
 
-@export var pitch_degrees: float = -52.0
-@export var default_distance: float = 15.5
-@export var min_distance: float = 7.5
-@export var max_distance: float = 28.0
-@export var zoom_step: float = 1.6
-@export var pan_speed: float = 18.0
+@export var pitch_degrees: float = -38.0
+@export var default_distance: float = 25.0
+@export var min_distance: float = 10.0
+@export var max_distance: float = 42.0
+@export var zoom_step: float = 1.8
+@export var pan_speed: float = 19.0
 @export var edge_pan_margin: float = 18.0
 @export var edge_pan_enabled: bool = false
 @export var follow_smoothness: float = 9.0
@@ -16,9 +17,11 @@ signal lock_mode_changed(locked: bool)
 var camera: Camera3D = null
 var follow_target: Node3D = null
 var camera_locked: bool = true
-var focus_point: Vector3 = Vector3(-2.0, 0.0, -1.5)
-var target_distance: float = 15.5
-var current_distance: float = 15.5
+var is_orthographic: bool = true  # Default: Crisp 45° Kenney / Project Zomboid Isometric! Press [O] for RO Perspective
+var focus_point: Vector3 = Vector3(0.0, 0.0, 3.0)
+var target_distance: float = 21.0
+var current_distance: float = 21.0
+var current_yaw_deg: float = 40.0
 
 var _middle_dragging: bool = false
 var _last_drag_pos: Vector2 = Vector2.ZERO
@@ -30,13 +33,14 @@ func _ready() -> void:
 
 	camera = Camera3D.new()
 	camera.name = "LolCamera3D"
-	camera.fov = 36.0
+	camera.projection = Camera3D.PROJECTION_ORTHOGONAL if is_orthographic else Camera3D.PROJECTION_PERSPECTIVE
+	camera.fov = 34.0
+	camera.size = 17.5
 	camera.near = 0.2
-	camera.far = 220.0
+	camera.far = 260.0
 	camera.current = true
 	add_child(camera)
 
-	# Ensure mouse cursor is always visible & free (no TPS pointer lock!)
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_apply_camera_transform()
 
@@ -59,9 +63,31 @@ func toggle_camera_lock() -> void:
 	set_camera_locked(not camera_locked)
 
 
+func set_orthographic_mode(ortho: bool) -> void:
+	if is_orthographic == ortho:
+		return
+	is_orthographic = ortho
+	if camera != null:
+		camera.projection = Camera3D.PROJECTION_ORTHOGONAL if is_orthographic else Camera3D.PROJECTION_PERSPECTIVE
+	_apply_camera_transform()
+	projection_mode_changed.emit(is_orthographic)
+
+
+func toggle_projection_mode() -> void:
+	set_orthographic_mode(not is_orthographic)
+
+
 func recenter_on_target() -> void:
 	if follow_target != null:
 		focus_point = Vector3(follow_target.global_position.x, 0.0, follow_target.global_position.z)
+
+
+func get_screen_axes() -> Dictionary:
+	# Returns screen-aligned horizontal right & forward vectors flattened on XZ plane
+	var yaw_rad: float = deg_to_rad(current_yaw_deg)
+	var right := Vector3(cos(yaw_rad), 0.0, -sin(yaw_rad)).normalized()
+	var forward := Vector3(-sin(yaw_rad), 0.0, -cos(yaw_rad)).normalized()
+	return {"right": right, "forward": forward, "yaw_rad": yaw_rad}
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -81,35 +107,39 @@ func _unhandled_input(event: InputEvent) -> void:
 		var delta: Vector2 = mm.position - _last_drag_pos
 		_last_drag_pos = mm.position
 		var drag_scale: float = current_distance * 0.0018
-		focus_point.x -= delta.x * drag_scale
-		focus_point.z -= delta.y * drag_scale * 1.25
+		var axes := get_screen_axes()
+		focus_point -= (axes["right"] as Vector3) * (delta.x * drag_scale)
+		focus_point += (axes["forward"] as Vector3) * (delta.y * drag_scale * 1.35)
 		_clamp_focus()
 	elif event is InputEventKey and event.pressed and not event.echo:
 		var key := event as InputEventKey
 		if key.keycode == KEY_Y:
 			toggle_camera_lock()
+		elif key.keycode == KEY_O:
+			toggle_projection_mode()
 		elif key.keycode == KEY_HOME or key.keycode == KEY_C:
 			recenter_on_target()
 
 
 func _process(delta: float) -> void:
 	current_distance = lerpf(current_distance, target_distance, clampf(delta * 10.0, 0.0, 1.0))
+	var desired_yaw: float = 40.0 if is_orthographic else 0.0
+	current_yaw_deg = lerpf(current_yaw_deg, desired_yaw, clampf(delta * 8.0, 0.0, 1.0))
 
 	var hold_recenter: bool = Input.is_key_pressed(KEY_C)
 	if (camera_locked or hold_recenter) and follow_target != null:
-		var desired := Vector3(follow_target.global_position.x, 0.0, follow_target.global_position.z)
+		var desired := Vector3(follow_target.global_position.x, 0.0, follow_target.global_position.z - 0.8)
 		focus_point = focus_point.lerp(desired, clampf(delta * follow_smoothness, 0.0, 1.0))
 	else:
-		# Free LoL pan with Arrow keys or optional screen-edge scroll
 		var pan_dir := Vector2.ZERO
 		if Input.is_key_pressed(KEY_LEFT):
 			pan_dir.x -= 1.0
 		if Input.is_key_pressed(KEY_RIGHT):
 			pan_dir.x += 1.0
 		if Input.is_key_pressed(KEY_UP):
-			pan_dir.y -= 1.0
-		if Input.is_key_pressed(KEY_DOWN):
 			pan_dir.y += 1.0
+		if Input.is_key_pressed(KEY_DOWN):
+			pan_dir.y -= 1.0
 
 		if edge_pan_enabled and pan_dir.length_squared() < 0.01:
 			var vp := get_viewport()
@@ -121,35 +151,43 @@ func _process(delta: float) -> void:
 				elif mpos.x > vsize.x - edge_pan_margin:
 					pan_dir.x += 1.0
 				if mpos.y < edge_pan_margin:
-					pan_dir.y -= 1.0
-				elif mpos.y > vsize.y - edge_pan_margin:
 					pan_dir.y += 1.0
+				elif mpos.y > vsize.y - edge_pan_margin:
+					pan_dir.y -= 1.0
 
 		if pan_dir.length_squared() > 0.001:
 			pan_dir = pan_dir.normalized()
-			focus_point.x += pan_dir.x * pan_speed * delta
-			focus_point.z += pan_dir.y * pan_speed * delta
+			var axes := get_screen_axes()
+			focus_point += (axes["right"] as Vector3) * (pan_dir.x * pan_speed * delta)
+			focus_point += (axes["forward"] as Vector3) * (pan_dir.y * pan_speed * delta)
 
 	_clamp_focus()
 	_apply_camera_transform()
 
 
 func _clamp_focus() -> void:
-	focus_point.x = clampf(focus_point.x, -34.0, 34.0)
-	focus_point.z = clampf(focus_point.z, -16.0, 22.0)
+	focus_point.x = clampf(focus_point.x, -26.0, 26.0)
+	focus_point.z = clampf(focus_point.z, -18.0, 20.0)
 
 
 func _apply_camera_transform() -> void:
 	if camera == null:
 		return
-	var pitch_rad: float = deg_to_rad(absf(pitch_degrees))
+	var active_pitch: float = 35.264 if is_orthographic else absf(pitch_degrees)
+	var pitch_rad: float = deg_to_rad(active_pitch)
+	var yaw_rad: float = deg_to_rad(current_yaw_deg)
+	var dist: float = 54.0 if is_orthographic else current_distance
+	if is_orthographic:
+		camera.size = clampf(current_distance * 0.96, 10.0, 38.0)
+
+	var horiz: float = cos(pitch_rad) * dist
 	var offset := Vector3(
-		0.0,
-		sin(pitch_rad) * current_distance,
-		cos(pitch_rad) * current_distance
+		sin(yaw_rad) * horiz,
+		sin(pitch_rad) * dist,
+		cos(yaw_rad) * horiz
 	)
 	camera.global_position = focus_point + offset
-	camera.look_at(focus_point + Vector3(0.0, 0.55, 0.0), Vector3.UP)
+	camera.look_at(focus_point + Vector3(0.0, 1.2, 0.0), Vector3.UP)
 
 
 func raycast_ground(screen_pos: Vector2, ground_y: float = 0.0) -> Vector3:

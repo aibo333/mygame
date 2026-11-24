@@ -19,9 +19,9 @@ func _process(_delta: float) -> bool:
 	if _ran:
 		return true
 	_ran = true
-	print("=== 甲鐵廢墟戰線 Godot 4 Headless Verification ===")
+	print("=== Retro Urban × SummerCuteness × Mixamo Godot 4 Verification ===")
 	_test_assets_and_config()
-	_test_main_scene_and_squad()
+	_test_main_scene_and_player()
 	print("=== Summary: %d passed, %d failed ===" % [_passed, _failed])
 	quit(0 if _failed == 0 else 1)
 	return true
@@ -29,22 +29,16 @@ func _process(_delta: float) -> bool:
 
 func _test_assets_and_config() -> void:
 	var ids := SquadConfig.get_squad_ids()
-	_assert(ids.size() == 3, "SquadConfig defines 3 Blue Archive chibi characters")
-
-	for cid in ids:
-		var cfg: Dictionary = SquadConfig.get_character(cid)
-		var mpath := str(cfg.get("model_path", ""))
-		var fpath := str(cfg.get("face_path", ""))
-		_assert(ResourceLoader.exists(mpath), "Character GLB exists: %s" % mpath)
-		_assert(ResourceLoader.exists(fpath), "Character anime face texture exists: %s" % fpath)
-
-	_assert(ResourceLoader.exists("res://assets/models/train/kabaneri_armored_train.glb"), "Kabaneri armored train GLB exists")
-	for prop in ["building_ruin_a", "building_ruin_b", "overpass_pillar", "wrecked_car", "tactical_cover", "supply_crate", "streetlight_broken"]:
-		var ppath := "res://assets/models/ruins/%s.glb" % prop
-		_assert(ResourceLoader.exists(ppath), "Ruins kit GLB exists: %s" % prop)
+	_assert(ids.size() == 1, "Solo player mode active (AI followers removed)")
+	_assert(ResourceLoader.exists(SquadConfig.AVATAR_FBX_PATH), "SummerCuteness avatar FBX exists")
+	for anim_key: String in ["idle", "walk", "shoot", "roll"]:
+		var apath: String = str(SquadConfig.MIXAMO_ANIMS.get(anim_key, ""))
+		_assert(ResourceLoader.exists(apath), "Mixamo animation FBX exists: %s" % anim_key)
+	for piece: String in ["road-asphalt-center", "wall-a-garage", "wall-b-roof-slant", "truck-green", "scaffolding-structure"]:
+		_assert(ResourceLoader.exists(SquadConfig.KENNEY_DIR + piece + ".glb"), "Kenney Retro Urban asset exists: %s" % piece)
 
 
-func _test_main_scene_and_squad() -> void:
+func _test_main_scene_and_player() -> void:
 	var packed: PackedScene = load("res://scenes/Main.tscn") as PackedScene
 	_assert(packed != null, "Load res://scenes/Main.tscn")
 	if packed == null:
@@ -55,37 +49,34 @@ func _test_main_scene_and_squad() -> void:
 	root.add_child(main)
 
 	var world := main as RuinsBaseWorld
-	_assert(world.camera_rig != null and world.camera_rig is LolCameraController, "LolCameraController initialized (TPS removed)")
+	_assert(world.camera_rig != null and world.camera_rig is LolCameraController, "LolCameraController initialized")
 	_assert(world.hud != null and world.hud is SquadHud, "SquadHud initialized")
-	_assert(world.squad.size() == 3, "All 3 chibi squad characters spawned")
+	_assert(world.squad.size() == 1, "Only 1 solo player character spawned")
 
-	# Verify all 3 characters have rigged AnimationPlayer with idle, walk, shoot, interact, roll
-	for g in world.squad:
-		var anims := g.get_available_animations()
-		var has_all := (
-			anims.has("idle")
-			and anims.has("walk")
-			and anims.has("shoot")
-			and anims.has("interact")
-			and anims.has("roll")
-		)
-		_assert(has_all, "%s has all 5 animations (idle/walk/shoot/interact/roll): %s" % [g.char_id, str(anims)])
+	var player := world.get_active_character()
+	_assert(player != null and player.skeleton != null and player.skeleton.name == "GeneralSkeleton", "Player uses retargeted GeneralSkeleton")
+	_assert(player.anim_player != null, "Mixamo AnimationPlayer attached")
 
-	# Test switching between the 3 girls
-	world.select_character(1)
-	_assert(world.active_index == 1 and world.get_active_character().char_id == "chisa_smg", "Switch active girl to Chisa (SMG)")
-	world.select_character(2)
-	_assert(world.active_index == 2 and world.get_active_character().char_id == "lily_sg", "Switch active girl to Lily (SG)")
+	var anims := player.get_available_animations()
+	var has_all := (
+		anims.has("idle")
+		and anims.has("walk")
+		and anims.has("shoot")
+		and anims.has("interact")
+		and anims.has("roll")
+	)
+	_assert(has_all, "Player has all 5 retargeted clips: %s" % str(anims))
 
-	# Test triggering the 4 core actions
-	var active := world.get_active_character()
 	for act in ["walk", "shoot", "interact", "roll"]:
-		active.trigger_preview_action(act)
-		_assert(active.current_action == act, "Character transitions cleanly to '%s'" % act)
+		player.trigger_preview_action(act)
+		_assert(player.current_action == act, "Player transitions cleanly to '%s'" % act)
 
-	# Test LoL camera lock toggle & ground raycast
 	var init_lock: bool = world.camera_rig.camera_locked
 	world.camera_rig.toggle_camera_lock()
-	_assert(world.camera_rig.camera_locked != init_lock, "LoL camera lock toggles cleanly")
+	_assert(world.camera_rig.camera_locked != init_lock, "Camera lock toggles cleanly")
+
+	var init_ortho: bool = world.camera_rig.is_orthographic
+	world.camera_rig.toggle_projection_mode()
+	_assert(world.camera_rig.is_orthographic != init_ortho, "Zomboid/RO camera projection toggles cleanly")
 
 	world.queue_free()
