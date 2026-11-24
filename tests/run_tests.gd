@@ -19,96 +19,73 @@ func _process(_delta: float) -> bool:
 	if _ran:
 		return true
 	_ran = true
-	print("=== 戰意守城原型 Godot 4 Headless Verification ===")
-	_test_game_config()
-	_test_main_scene_and_gameplay()
+	print("=== 甲鐵廢墟戰線 Godot 4 Headless Verification ===")
+	_test_assets_and_config()
+	_test_main_scene_and_squad()
 	print("=== Summary: %d passed, %d failed ===" % [_passed, _failed])
 	quit(0 if _failed == 0 else 1)
 	return true
 
 
-func _test_game_config() -> void:
-	_assert(is_equal_approx(GameConfig.GATE_MAX_HP, 500.0), "GameConfig.GATE_MAX_HP == 500.0")
-	_assert(is_equal_approx(GameConfig.GATE_X, -22.0), "GameConfig.GATE_X == -22.0")
+func _test_assets_and_config() -> void:
+	var ids := SquadConfig.get_squad_ids()
+	_assert(ids.size() == 3, "SquadConfig defines 3 Blue Archive chibi characters")
 
-	for rid in ["shieldmen", "pikemen", "archers"]:
-		var r: Dictionary = GameConfig.get_regiment(rid)
-		_assert(r.get("id", "") == rid and int(r.get("count", 0)) >= 8, "GameConfig.get_regiment('%s') valid" % rid)
+	for cid in ids:
+		var cfg: Dictionary = SquadConfig.get_character(cid)
+		var mpath := str(cfg.get("model_path", ""))
+		var fpath := str(cfg.get("face_path", ""))
+		_assert(ResourceLoader.exists(mpath), "Character GLB exists: %s" % mpath)
+		_assert(ResourceLoader.exists(fpath), "Character anime face texture exists: %s" % fpath)
 
-	for eid in ["goblin_raider", "shield_orc", "skeleton_archer", "berserker", "enemy_commander"]:
-		var e: Dictionary = GameConfig.get_enemy(eid)
-		_assert(e.get("id", "") == eid and float(e.get("max_hp", 0.0)) > 0.0, "GameConfig.get_enemy('%s') valid" % eid)
-
-	for w in [1, 2, 3]:
-		var wcfg: Dictionary = GameConfig.get_wave(w)
-		var spawns: Array = wcfg.get("spawns", [])
-		_assert(int(wcfg.get("wave_number", 0)) == w and not spawns.is_empty(), "GameConfig.get_wave(%d) valid" % w)
+	_assert(ResourceLoader.exists("res://assets/models/train/kabaneri_armored_train.glb"), "Kabaneri armored train GLB exists")
+	for prop in ["building_ruin_a", "building_ruin_b", "overpass_pillar", "wrecked_car", "tactical_cover", "supply_crate", "streetlight_broken"]:
+		var ppath := "res://assets/models/ruins/%s.glb" % prop
+		_assert(ResourceLoader.exists(ppath), "Ruins kit GLB exists: %s" % prop)
 
 
-func _test_main_scene_and_gameplay() -> void:
+func _test_main_scene_and_squad() -> void:
 	var packed: PackedScene = load("res://scenes/Main.tscn") as PackedScene
 	_assert(packed != null, "Load res://scenes/Main.tscn")
 	if packed == null:
 		return
 
 	var main: Node = packed.instantiate()
-	_assert(main is BattlefieldManager, "Main scene root is BattlefieldManager")
+	_assert(main is RuinsBaseWorld, "Main scene root is RuinsBaseWorld")
 	root.add_child(main)
 
-	var bf := main as BattlefieldManager
-	_assert(bf.hero != null and bf.hero is HeroController, "BattlefieldManager created HeroController")
-	_assert(bf.regiment != null and bf.regiment is RegimentManager, "BattlefieldManager created RegimentManager")
-	_assert(bf.hud != null and bf.hud is BattleHud, "BattlefieldManager created BattleHud")
+	var world := main as RuinsBaseWorld
+	_assert(world.camera_rig != null and world.camera_rig is LolCameraController, "LolCameraController initialized (TPS removed)")
+	_assert(world.hud != null and world.hud is SquadHud, "SquadHud initialized")
+	_assert(world.squad.size() == 3, "All 3 chibi squad characters spawned")
 
-	# Hero HUD state & camera toggle
-	var h_state: Dictionary = bf.hero.get_hud_state()
-	_assert(float(h_state.get("max_hp", 0.0)) > 0.0 and bool(h_state.get("alive", false)), "HeroController.get_hud_state() valid")
-	var initial_tps: bool = bf.hero.is_tps_mode()
-	bf.hero.toggle_camera_mode()
-	_assert(bf.hero.is_tps_mode() != initial_tps, "HeroController.toggle_camera_mode() toggles mode")
-	bf.hero.toggle_camera_mode()
+	# Verify all 3 characters have rigged AnimationPlayer with idle, walk, shoot, interact, roll
+	for g in world.squad:
+		var anims := g.get_available_animations()
+		var has_all := (
+			anims.has("idle")
+			and anims.has("walk")
+			and anims.has("shoot")
+			and anims.has("interact")
+			and anims.has("roll")
+		)
+		_assert(has_all, "%s has all 5 animations (idle/walk/shoot/interact/roll): %s" % [g.char_id, str(anims)])
 
-	# Regiment switching, orders, formations, skill
-	for rid in ["shieldmen", "pikemen", "archers"]:
-		bf.regiment.set_regiment(rid)
-		var rs: Dictionary = bf.regiment.get_hud_state()
-		_assert(str(rs.get("type", "")) == rid and int(rs.get("alive_count", 0)) >= 8, "RegimentManager switched to '%s' with >=8 soldiers" % rid)
+	# Test switching between the 3 girls
+	world.select_character(1)
+	_assert(world.active_index == 1 and world.get_active_character().char_id == "chisa_smg", "Switch active girl to Chisa (SMG)")
+	world.select_character(2)
+	_assert(world.active_index == 2 and world.get_active_character().char_id == "lily_sg", "Switch active girl to Lily (SG)")
 
-	bf.regiment.set_order("follow")
-	_assert(bf.regiment.current_order == "follow", "Regiment order -> follow")
-	bf.regiment.set_order("hold", Vector3(-6.0, 0.0, 2.0))
-	_assert(bf.regiment.current_order == "hold", "Regiment order -> hold")
-	bf.regiment.set_order("engage")
-	_assert(bf.regiment.current_order == "engage", "Regiment order -> engage")
+	# Test triggering the 4 core actions
+	var active := world.get_active_character()
+	for act in ["walk", "shoot", "interact", "roll"]:
+		active.trigger_preview_action(act)
+		_assert(active.current_action == act, "Character transitions cleanly to '%s'" % act)
 
-	bf.regiment.set_formation("compact")
-	_assert(bf.regiment.current_formation == "compact", "Regiment formation -> compact")
-	bf.regiment.set_formation("spread")
-	_assert(bf.regiment.current_formation == "spread", "Regiment formation -> spread")
+	# Test LoL camera lock toggle & ground raycast
+	var init_lock: bool = world.camera_rig.camera_locked
+	world.camera_rig.toggle_camera_lock()
+	_assert(world.camera_rig.camera_locked != init_lock, "LoL camera lock toggles cleanly")
 
-	var skill_ok: bool = bf.regiment.trigger_skill(Vector3(4.0, 0.0, 0.0))
-	_assert(skill_ok and bf.regiment.skill_cd > 0.0, "RegimentManager.trigger_skill() executes and starts cooldown")
-
-	# EnemyUnit setup, damage, death
-	var enemy := EnemyUnit.new()
-	bf.enemies_root.add_child(enemy)
-	enemy.setup("goblin_raider", bf.vfx_root)
-	_assert(enemy.is_in_group("enemies") and enemy.hp > 0.0 and not enemy.is_dead, "EnemyUnit goblin_raider setup valid")
-
-	var died_flag: Array[bool] = [false]
-	enemy.died.connect(func(_e: EnemyUnit): died_flag[0] = true)
-
-	var killed_partial: bool = enemy.take_damage(10.0, Vector3(1.0, 0.0, 0.0), false)
-	_assert(not killed_partial and enemy.hp < enemy.max_hp and not died_flag[0], "EnemyUnit partial damage reduces HP without killing")
-
-	var killed_lethal: bool = enemy.take_damage(999.0, Vector3(2.0, 0.0, 0.0), true)
-	_assert(killed_lethal and enemy.is_dead and died_flag[0], "EnemyUnit lethal damage kills and emits died")
-
-	# Commander setup check
-	var boss := EnemyUnit.new()
-	bf.enemies_root.add_child(boss)
-	boss.setup("enemy_commander", bf.vfx_root, "測試督軍", 1.0)
-	_assert(boss.is_commander and boss.unit_scale >= 1.5 and boss.display_name == "測試督軍", "EnemyUnit commander setup valid")
-	boss.queue_free()
-
-	bf.queue_free()
+	world.queue_free()
