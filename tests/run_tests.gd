@@ -344,4 +344,106 @@ func _test_main_scene_player_and_phase2() -> void:
 	sui.cancel()
 	_assert(not sui.is_active, "Stratagem: Emergency cancel closes active sequence cleanly")
 
+	# --- HUD Overhaul, Survival Vitals, Quickbelt, Field Fortifications [B] & Zomboid Right-Click Menu ---
+	_assert(world.build_manager != null and world.build_manager is BuildDefenseManager, "Fortifications: BuildDefenseManager initialized")
+	_assert(world.build_menu_ui != null and world.build_menu_ui is BuildMenuUi, "Fortifications: BuildMenuUi initialized")
+	_assert(world.context_menu_ui != null and world.context_menu_ui is ContextMenuUi, "Zomboid UI: ContextMenuUi initialized")
+	_assert(world.quickbelt_slots.size() == 5, "HUD: Quickbelt initializes 5 consumable/tactical slots")
+
+	# Survival vitals & Quickbelt usage
+	player.reset_combat_state()
+	player.take_damage(50.0)
+	player.hunger = 50.0
+	player.stamina = 40.0
+	var use_band: Dictionary = world.use_quickbelt_slot(0)
+	_assert(bool(use_band.get("ok", false)) and is_equal_approx(player.hp, 90.0), "Quickbelt: Slot 1 Bandage heals +40 HP")
+	var use_rat: Dictionary = world.use_quickbelt_slot(1)
+	_assert(bool(use_rat.get("ok", false)) and is_equal_approx(player.hunger, 95.0) and is_equal_approx(player.stamina, 70.0), "Quickbelt: Slot 2 Ration restores Hunger and Stamina")
+	var use_stim: Dictionary = world.use_quickbelt_slot(2)
+	_assert(bool(use_stim.get("ok", false)) and is_equal_approx(player.stamina, 100.0), "Quickbelt: Slot 3 Stimulant maximizes Stamina")
+
+	# Field Fortification placement: Sandbag, Barricade, Landmine, Fixed Sentry Turret
+	var bm: BuildDefenseManager = world.build_manager
+	var build_bp: Dictionary = {"scrap": 20, "parts": 15, "fuel": 10, "supplies": 5}
+	var build_st: Dictionary = {"scrap": 0, "parts": 0, "fuel": 0, "supplies": 0}
+	var sb_res: Dictionary = bm.try_place_structure("sandbag", Vector3(-2.0, 0.0, 3.0), 0.0, world.sector_generator.world_bounds, build_bp, build_st)
+	var bar_res: Dictionary = bm.try_place_structure("barricade", Vector3(2.0, 0.0, 3.0), 45.0, world.sector_generator.world_bounds, build_bp, build_st)
+	var mine_res: Dictionary = bm.try_place_structure("landmine", Vector3(0.0, 0.0, 6.0), 0.0, world.sector_generator.world_bounds, build_bp, build_st)
+	var tur_res: Dictionary = bm.try_place_structure("turret", Vector3(-4.0, 0.0, 5.0), 0.0, world.sector_generator.world_bounds, build_bp, build_st)
+	_assert(bool(sb_res["ok"]) and bool(bar_res["ok"]) and bool(mine_res["ok"]) and bool(tur_res["ok"]), "Fortifications: Sandbag, Barricade, Landmine, and Fixed Turret place cleanly")
+
+	# Landmine detonates on approaching zombie!
+	var mine_z: ZombieUnit = hm.spawn_zombie("walker", Vector3(0.2, 0.0, 6.0))
+	bm.update_defenses(0.3, hm)
+	_assert(not mine_z.is_alive, "Fortifications: Proximity Landmine detonates and kills nearby zombie")
+
+	# Fixed Sentry Turret shoots nearby zombie!
+	var sentry_z: ZombieUnit = hm.spawn_zombie("brute", Vector3(-4.0, 0.0, 10.0))
+	var brute_hp0: float = sentry_z.hp
+	bm.update_defenses(0.35, hm)
+	_assert(sentry_z.hp < brute_hp0, "Fortifications: Fixed Sentry Turret acquires and damages nearby zombie")
+
+	# Project Zomboid Right-Click Context Menu opens with context-specific actions
+	var ctx_train: Array[Dictionary] = world.open_context_menu_at(Vector2(400.0, 300.0), train.get_boarding_world_pos())
+	_assert(world.context_menu_ui.is_open() and ctx_train.size() >= 3, "Zomboid UI: Right-clicking Armored Train opens context menu with train actions")
+	world.context_menu_ui.close()
+	_assert(not world.context_menu_ui.is_open(), "Zomboid UI: Context menu closes cleanly")
+
+	# --- Dev Cheat Code Table & Default DEMO Fortifications ---
+	_assert(world.dev_cheat_ui != null and world.dev_cheat_ui is DevCheatUi, "Dev Cheat: DevCheatUi initialized")
+	world.dev_cheat_ui.set_open(true)
+	_assert(world.dev_cheat_ui.is_open(), "Dev Cheat: Cheat Code Table opens cleanly")
+	world.dev_cheat_ui.set_open(false)
+	_assert(not world.dev_cheat_ui.is_open(), "Dev Cheat: Cheat Code Table closes cleanly")
+
+	# Default DEMO start spawns all 4 fortification types without touching backpack/stash
+	world.generate_new_sector(888888, true)
+	var default_kinds: Array[String] = bm.get_alive_structure_kinds()
+	_assert(default_kinds.has("sandbag") and default_kinds.has("barricade") and default_kinds.has("landmine") and default_kinds.has("turret"), "DEMO Default: Sector start spawns all 4 fortification types (sandbag/barricade/landmine/turret)")
+	_assert(world.loot_stash_manager.get_backpack_used() == 0 and world.loot_stash_manager.get_stash_total() == 0, "DEMO Default: Preset fortifications do not consume player backpack or train stash")
+
+	# Cheat 1: God Mode blocks player, train, and fortification damage
+	world.set_cheat("god_mode", true)
+	player.take_damage(80.0)
+	_assert(is_equal_approx(player.hp, player.max_hp), "Dev Cheat (God Mode): Player ignores incoming damage")
+	var train_hp_before: float = train.hull_hp
+	world._on_zombie_attacked_train(250.0)
+	_assert(is_equal_approx(train.hull_hp, train_hp_before), "Dev Cheat (God Mode): Armored Train ignores hull damage")
+	world.set_cheat("god_mode", false)
+
+	# Cheat 2: Infinite Resources enables free fortification placement & infinite quickbelt usage
+	world.set_cheat("infinite_resources", true)
+	var empty_bp: Dictionary = {"scrap": 0, "parts": 0, "fuel": 0, "supplies": 0}
+	var empty_st: Dictionary = {"scrap": 0, "parts": 0, "fuel": 0, "supplies": 0}
+	var free_turret: Dictionary = bm.try_place_structure("turret", Vector3(6.0, 0.0, 4.0), 0.0, world.sector_generator.world_bounds, empty_bp, empty_st)
+	_assert(bool(free_turret.get("ok", false)), "Dev Cheat (Infinite Resources): Places expensive Sentry Turret with 0 resources")
+	var ration_before: int = int(world.quickbelt_slots[1]["count"])
+	var free_use: Dictionary = world.use_quickbelt_slot(1)
+	_assert(bool(free_use.get("ok", false)) and int(world.quickbelt_slots[1]["count"]) == ration_before, "Dev Cheat (Infinite Resources): Quickbelt item use does not consume stock")
+	world.set_cheat("infinite_resources", false)
+
+	# Cheat 3: Pause Spawns freezes waves, ambushes, and periodic zombie spawning
+	world.set_cheat("pause_spawns", true)
+	hm.clear_all_zombies()
+	var wave_spawned: int = hm.spawn_wave(6, true)
+	var ambush_spawned: int = hm.spawn_local_ambush(Vector3.ZERO, 4)
+	hm.update_horde(10.0, player.global_position, true, train, world.train_consist.compute_stats(), 0.0)
+	_assert(wave_spawned == 0 and ambush_spawned == 0 and hm.get_active_zombie_count() == 0, "Dev Cheat (Pause Spawns): Freezes periodic, wave, and ambush zombie spawning")
+	world.set_cheat("pause_spawns", false)
+
+	# --- 4x Expanded Map, Enlarged Enterable Train, Working NPCs & Non-Player Stickman Verification ---
+	var map_area: float = world.sector_generator.world_bounds.size.x * world.sector_generator.world_bounds.size.y
+	_assert(map_area >= 5400.0, "4x Map: Playable sector area expanded to 4x (%.0f m^2 >= 5400 m^2)" % map_area)
+	_assert(ArmoredTrainBase.CAR_PITCH >= 10.0 and ArmoredTrainBase.CAR_WIDTH >= 5.4 and train.get_train_half_length() >= 20.0, "Enlarged Train: Armored Train volume and dimensions scaled up")
+	var train_inside_pt: Vector3 = train.position + Vector3(2.0, 0.0, 0.0)
+	_assert(train.is_point_inside_train(train_inside_pt) and world.sector_generator.world_bounds.has_point(Vector2(train_inside_pt.x, train_inside_pt.z)), "Enterable Train: Interior coordinates lie inside walkable playable bounds")
+	train.set_interior_cutaway(true)
+	_assert(train.is_interior_cutaway_active(), "Enterable Train: Roof cutaway activates when entering train interior")
+	train.set_interior_cutaway(false)
+	_assert(train.get_working_npc_count() >= 4, "Train Crew NPCs: Visible working Stickman NPCs staffed inside train (%d active)" % train.get_working_npc_count())
+	train.animate_train(1.5)
+	var sample_z: ZombieUnit = hm.spawn_zombie("walker", Vector3(0.0, 0.0, 4.0))
+	_assert(sample_z != null and sample_z.is_stickman, "Stickman Non-Players: Zombies render with articulated 3D Stickman rig")
+	_assert(not world.mission_director.survivor_node.is_empty() and not (world.mission_director.survivor_node.get("stickman", {}) as Dictionary).is_empty(), "Stickman Non-Players: Trapped Survivor renders with articulated 3D Stickman rig")
+
 	world.queue_free()

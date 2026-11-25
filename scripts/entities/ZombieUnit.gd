@@ -71,8 +71,11 @@ var explodes_on_death: bool = false
 var is_alive: bool = false
 
 var _visual_root: Node3D = null
-var _body_mesh: MeshInstance3D = null
-var _head_mesh: MeshInstance3D = null
+var _stickman_rig: Dictionary = {}
+var _left_arm: Node3D = null
+var _right_arm: Node3D = null
+var _left_leg: Node3D = null
+var _right_leg: Node3D = null
 var _eye_l: MeshInstance3D = null
 var _eye_r: MeshInstance3D = null
 var _body_mat: StandardMaterial3D = null
@@ -83,6 +86,7 @@ var _attack_cd: float = 0.0
 var _hit_flash_timer: float = 0.0
 var _wobble_phase: float = 0.0
 var _base_body_color: Color = Color(0.36, 0.44, 0.34)
+var is_stickman: bool = true
 
 
 func _ready() -> void:
@@ -110,51 +114,30 @@ func _build_visuals() -> void:
 	_visual_root.name = "ZombieVisual"
 	add_child(_visual_root)
 
-	_body_mat = StandardMaterial3D.new()
-	_body_mat.roughness = 0.78
-	_head_mat = StandardMaterial3D.new()
-	_head_mat.roughness = 0.72
+	_stickman_rig = StickmanFactory.create_stickman({
+		"name": "ZombieStickmanRig",
+		"body_color": Color(0.36, 0.44, 0.34),
+		"head_color": Color(0.52, 0.60, 0.46),
+		"eye_color": Color(1.0, 0.4, 0.2),
+		"emit_eyes": true,
+		"limb_thickness": 0.068,
+		"accessory": "zombie",
+	})
+	var rig_root: Node3D = _stickman_rig["root"] as Node3D
+	_visual_root.add_child(rig_root)
 
-	_body_mesh = MeshInstance3D.new()
-	var bmesh: CapsuleMesh = CapsuleMesh.new()
-	bmesh.radius = 0.34
-	bmesh.height = 1.15
-	_body_mesh.mesh = bmesh
-	_body_mesh.position = Vector3(0.0, 0.76, 0.0)
-	_body_mesh.material_override = _body_mat
-	_visual_root.add_child(_body_mesh)
+	_body_mat = _stickman_rig["body_mat"] as StandardMaterial3D
+	_head_mat = _stickman_rig["head_mat"] as StandardMaterial3D
+	_left_arm = _stickman_rig["left_arm"] as Node3D
+	_right_arm = _stickman_rig["right_arm"] as Node3D
+	_left_leg = _stickman_rig["left_leg"] as Node3D
+	_right_leg = _stickman_rig["right_leg"] as Node3D
+	_eye_l = _stickman_rig["eye_l"] as MeshInstance3D
+	_eye_r = _stickman_rig["eye_r"] as MeshInstance3D
 
-	_head_mesh = MeshInstance3D.new()
-	var hmesh: SphereMesh = SphereMesh.new()
-	hmesh.radius = 0.24
-	hmesh.height = 0.48
-	_head_mesh.mesh = hmesh
-	_head_mesh.position = Vector3(0.0, 1.50, -0.05)
-	_head_mesh.material_override = _head_mat
-	_visual_root.add_child(_head_mesh)
-
-	# Outstretched arms silhouette for instant readability from 45 deg isometric view
-	for side: float in [-1.0, 1.0]:
-		var arm: MeshInstance3D = MeshInstance3D.new()
-		var amesh: BoxMesh = BoxMesh.new()
-		amesh.size = Vector3(0.14, 0.14, 0.62)
-		arm.mesh = amesh
-		arm.position = Vector3(side * 0.38, 1.12, -0.34)
-		arm.material_override = _head_mat
-		_visual_root.add_child(arm)
-
-	var eye_mesh: SphereMesh = SphereMesh.new()
-	eye_mesh.radius = 0.045
-	eye_mesh.height = 0.09
-	_eye_l = MeshInstance3D.new()
-	_eye_l.mesh = eye_mesh
-	_eye_l.position = Vector3(-0.09, 1.54, -0.25)
-	_visual_root.add_child(_eye_l)
-
-	_eye_r = MeshInstance3D.new()
-	_eye_r.mesh = eye_mesh
-	_eye_r.position = Vector3(0.09, 1.54, -0.25)
-	_visual_root.add_child(_eye_r)
+	# Outstretched zombie stickman arms!
+	_left_arm.rotation_degrees.x = 84.0
+	_right_arm.rotation_degrees.x = 84.0
 
 	# Mini world-space HP bar (shown once damaged)
 	_hp_bar_root = Node3D.new()
@@ -303,5 +286,12 @@ func tick_zombie(delta: float, player_pos: Vector3, player_alive: bool, train_ta
 		var yaw: float = atan2(-dir.x, -dir.z)
 		_visual_root.rotation.y = lerp_angle(_visual_root.rotation.y, yaw, clampf(delta * 10.0, 0.0, 1.0))
 
-	_wobble_phase += delta * (move_speed * 2.6)
-	_visual_root.rotation.z = sin(_wobble_phase) * 0.075
+	_wobble_phase += delta * (move_speed * 3.1)
+	var stride: float = sin(_wobble_phase)
+	_visual_root.rotation.z = stride * 0.075
+	if _left_leg != null and _right_leg != null:
+		_left_leg.rotation.x = stride * 0.62
+		_right_leg.rotation.x = -stride * 0.62
+	if _left_arm != null and _right_arm != null:
+		_left_arm.rotation_degrees.x = 82.0 + stride * 14.0
+		_right_arm.rotation_degrees.x = 82.0 - stride * 14.0

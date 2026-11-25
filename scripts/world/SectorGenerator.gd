@@ -6,21 +6,21 @@ extends Node3D
 
 const TILE: float = 3.2
 const KIT: String = "res://assets/packs/kenney_retro_urban/"
-const GRID_MIN_X: int = -8
-const GRID_MAX_X: int = 7
-const GRID_MIN_Z: int = -6
-const GRID_MAX_Z: int = 6
+const GRID_MIN_X: int = -15
+const GRID_MAX_X: int = 14
+const GRID_MIN_Z: int = -9
+const GRID_MAX_Z: int = 12
 
 const BLOCK_KEYS: Array[String] = ["NW", "NE", "SW", "SE"]
 const BLOCK_TYPES: Array[String] = ["industrial", "commercial", "park_alley", "residential_yard"]
-const CROSS_ROAD_CHOICES: Array[int] = [-2, 0, 2]
+const CROSS_ROAD_CHOICES: Array[int] = [-4, 0, 4]
 
 var current_seed: int = 0
 var cross_road_x: int = 0
 var block_assignments: Dictionary = {}
-var train_dock_pos: Vector3 = Vector3(0.0, 0.0, -14.72)
-var player_spawn_pos: Vector3 = Vector3(0.0, 0.0, -8.8)
-var world_bounds: Rect2 = Rect2(-23.5, -12.2, 45.0, 30.2)
+var train_dock_pos: Vector3 = SquadConfig.TRAIN_POSITION
+var player_spawn_pos: Vector3 = Vector3(0.0, 0.0, -14.8)
+var world_bounds: Rect2 = Rect2(SquadConfig.WORLD_MIN_X, SquadConfig.WORLD_MIN_Z, SquadConfig.WORLD_MAX_X - SquadConfig.WORLD_MIN_X, SquadConfig.WORLD_MAX_Z - SquadConfig.WORLD_MIN_Z)
 var loot_spawn_points: Array[Dictionary] = []
 var flicker_lamps: Array[OmniLight3D] = []
 
@@ -39,9 +39,9 @@ func generate_sector(seed_value: int) -> Dictionary:
 	rng.seed = seed_value
 
 	cross_road_x = CROSS_ROAD_CHOICES[rng.randi_range(0, CROSS_ROAD_CHOICES.size() - 1)]
-	train_dock_pos = Vector3(0.0, 0.0, -14.72)
-	player_spawn_pos = Vector3(0.0, 0.0, -8.8)
-	world_bounds = Rect2(-23.5, -12.2, 45.0, 30.2)
+	train_dock_pos = SquadConfig.TRAIN_POSITION
+	player_spawn_pos = Vector3(0.0, 0.0, -14.8)
+	world_bounds = Rect2(SquadConfig.WORLD_MIN_X, SquadConfig.WORLD_MIN_Z, SquadConfig.WORLD_MAX_X - SquadConfig.WORLD_MIN_X, SquadConfig.WORLD_MAX_Z - SquadConfig.WORLD_MIN_Z)
 
 	_sector_root = Node3D.new()
 	_sector_root.name = "GeneratedSector"
@@ -114,30 +114,30 @@ func _assign_blocks(rng: RandomNumberGenerator) -> void:
 
 
 func _build_ground_collider() -> void:
-	_add_invisible_collider(_sector_root, "MainGroundCollider", Vector3(96.0, 0.4, 96.0), Vector3(0.0, -0.2, 0.0))
+	_add_invisible_collider(_sector_root, "MainGroundCollider", Vector3(170.0, 0.4, 170.0), Vector3(0.0, -0.2, 4.0))
 
 
 func _get_block_rect(block_key: String) -> Rect2i:
 	match block_key:
 		"NW":
-			return Rect2i(GRID_MIN_X, -2, (cross_road_x - 1) - GRID_MIN_X + 1, 3)
+			return Rect2i(GRID_MIN_X, -3, (cross_road_x - 1) - GRID_MIN_X + 1, 5)
 		"NE":
-			return Rect2i(cross_road_x + 2, -2, GRID_MAX_X - (cross_road_x + 2) + 1, 3)
+			return Rect2i(cross_road_x + 2, -3, GRID_MAX_X - (cross_road_x + 2) + 1, 5)
 		"SW":
-			return Rect2i(GRID_MIN_X, 3, (cross_road_x - 1) - GRID_MIN_X + 1, 4)
+			return Rect2i(GRID_MIN_X, 4, (cross_road_x - 1) - GRID_MIN_X + 1, 9)
 		"SE":
-			return Rect2i(cross_road_x + 2, 3, GRID_MAX_X - (cross_road_x + 2) + 1, 4)
+			return Rect2i(cross_road_x + 2, 4, GRID_MAX_X - (cross_road_x + 2) + 1, 9)
 		_:
 			return Rect2i(0, 0, 0, 0)
 
 
 func _block_key_for_tile(gx: int, gz: int) -> String:
-	if gz >= -2 and gz <= 0:
+	if gz >= -3 and gz <= 1:
 		if gx <= cross_road_x - 1:
 			return "NW"
 		if gx >= cross_road_x + 2:
 			return "NE"
-	elif gz >= 3 and gz <= 6:
+	elif gz >= 4 and gz <= 12:
 		if gx <= cross_road_x - 1:
 			return "SW"
 		if gx >= cross_road_x + 2:
@@ -148,22 +148,23 @@ func _block_key_for_tile(gx: int, gz: int) -> String:
 func _build_roads_and_terrain(rng: RandomNumberGenerator) -> void:
 	for gx in range(GRID_MIN_X, GRID_MAX_X + 1):
 		for gz in range(GRID_MIN_Z, GRID_MAX_Z + 1):
-			if gz == -6:
+			if gz <= -8:
 				_spawn_kenney("road-dirt-tile", float(gx), 0.0, float(gz))
 				continue
-			if gz == -5:
+			if gz == -7 or gz == -6:
 				var rail_asset: String = "road-dirt-straight" if (gx + current_seed) % 3 != 0 else "road-dirt-tile"
 				var rail_rot: float = 90.0 if rail_asset == "road-dirt-straight" else 0.0
 				_spawn_kenney(rail_asset, float(gx), 0.0, float(gz), rail_rot)
 				continue
-			if gz == -4:
+			if gz == -5:
 				_spawn_kenney("road-asphalt-pavement", float(gx), 0.0, float(gz))
 				continue
 
-			var on_ew_road: bool = (gz == 1 or gz == 2)
-			var on_ns_road: bool = (gx == cross_road_x or gx == cross_road_x + 1) and gz >= -3
+			var on_ew_road: bool = (gz == 2 or gz == 3)
+			var on_south_lane: bool = (gz == 8)
+			var on_ns_road: bool = (gx == cross_road_x or gx == cross_road_x + 1) and gz >= -4
 
-			if gz == -3:
+			if gz == -4:
 				if on_ns_road:
 					var ns_rot_plat: float = 90.0 if gx == cross_road_x else -90.0
 					_spawn_kenney("road-asphalt-side", float(gx), 0.0, float(gz), ns_rot_plat)
@@ -171,12 +172,15 @@ func _build_roads_and_terrain(rng: RandomNumberGenerator) -> void:
 					_spawn_kenney("road-asphalt-pavement", float(gx), 0.0, float(gz))
 				continue
 
-			if on_ew_road and on_ns_road:
+			if (on_ew_road or on_south_lane) and on_ns_road:
 				_spawn_kenney("road-asphalt-center", float(gx), 0.0, float(gz))
 				continue
 			if on_ew_road:
-				var ew_rot: float = 180.0 if gz == 1 else 0.0
+				var ew_rot: float = 180.0 if gz == 2 else 0.0
 				_spawn_kenney("road-asphalt-side", float(gx), 0.0, float(gz), ew_rot)
+				continue
+			if on_south_lane:
+				_spawn_kenney("road-asphalt-center", float(gx), 0.0, float(gz))
 				continue
 			if on_ns_road:
 				var ns_rot: float = 90.0 if gx == cross_road_x else -90.0
@@ -198,7 +202,7 @@ func _build_roads_and_terrain(rng: RandomNumberGenerator) -> void:
 				else:
 					ground_asset = "grass"
 			elif btype == "residential_yard":
-				var is_outer_corner: bool = (gz >= 5 or gz == -2) and (gx == rect.position.x or gx == rect.position.x + rect.size.x - 1)
+				var is_outer_corner: bool = (gz >= 9 or gz <= -2) and (gx <= rect.position.x + 1 or gx >= rect.position.x + rect.size.x - 2)
 				if is_outer_corner:
 					ground_asset = "grass"
 				elif rng.randf() < 0.14:
@@ -217,9 +221,9 @@ func _build_roads_and_terrain(rng: RandomNumberGenerator) -> void:
 func _is_block_road_border(gx: int, gz: int, bkey: String, rect: Rect2i) -> bool:
 	var is_north: bool = bkey == "NW" or bkey == "NE"
 	var is_west: bool = bkey == "NW" or bkey == "SW"
-	if is_north and gz == 0:
+	if is_north and gz == 1:
 		return true
-	if (not is_north) and gz == 3:
+	if (not is_north) and gz == 4:
 		return true
 	if is_west and gx == rect.position.x + rect.size.x - 1:
 		return true
@@ -231,9 +235,9 @@ func _is_block_road_border(gx: int, gz: int, bkey: String, rect: Rect2i) -> bool
 func _is_park_dirt_border(gx: int, gz: int, bkey: String, rect: Rect2i) -> bool:
 	var is_north: bool = bkey == "NW" or bkey == "NE"
 	var is_west: bool = bkey == "NW" or bkey == "SW"
-	if is_north and gz == -1:
+	if is_north and gz == 0:
 		return true
-	if (not is_north) and gz == 4:
+	if (not is_north) and gz == 5:
 		return true
 	if is_west and gx == rect.position.x + rect.size.x - 2:
 		return true
@@ -249,7 +253,7 @@ func _park_border_rot(gx: int, gz: int, bkey: String, rect: Rect2i) -> float:
 		return 90.0
 	if (not is_west) and gx == rect.position.x + 1:
 		return -90.0
-	if is_north and gz == -1:
+	if is_north and gz == 0:
 		return 0.0
 	return 180.0
 
@@ -279,6 +283,54 @@ func _build_all_blocks(rng: RandomNumberGenerator) -> void:
 					_build_residential_south(bkey, rect, is_west, rng)
 				else:
 					_build_residential_north(bkey, rect, is_west, rng)
+
+		# Populate the expanded 4x outer wings & deep-south city blocks so the whole 90x60m map feels rich!
+		_build_expanded_outer_district(bkey, btype, rect, is_south, is_west, rng)
+
+
+func _build_expanded_outer_district(bkey: String, btype: String, rect: Rect2i, is_south: bool, is_west: bool, rng: RandomNumberGenerator) -> void:
+	var min_x: int = rect.position.x
+	var max_x: int = rect.position.x + rect.size.x - 1
+	var outer_x: int = min_x + 2 if is_west else max_x - 2
+	var mid_x: int = floori(float(min_x + max_x) * 0.5)
+
+	if not is_south:
+		# Outer wing building cluster on the far west/east edge of the enlarged North blocks
+		for gx in range(outer_x - 1, outer_x + 2):
+			if gx < min_x or gx > max_x or _is_tile_occupied(gx, -2):
+				continue
+			if btype == "park_alley":
+				_spawn_kenney("tree-park-large" if gx == outer_x else "tree-pine-large", float(gx), 0.0, -1.8, rng.randf_range(0.0, 120.0), 1.15)
+				if gx == outer_x:
+					_spawn_kenney("detail-bench", float(gx), 0.0, 0.3, 0.0)
+			else:
+				var wall_pref: String = "wall-b" if btype == "industrial" else "wall-a"
+				_spawn_kenney(wall_pref + ("-garage" if gx == outer_x else "-window"), float(gx), 0.0, -2.0, 180.0, 1.0, Vector3(1.0, 1.0, 1.0))
+				_spawn_kenney(wall_pref + "-window", float(gx), 1.0, -2.0, 180.0)
+				_spawn_kenney(wall_pref + "-roof-slant", float(gx), 2.0, -2.0, 180.0)
+		_register_loot_candidate(bkey, btype, Vector3(float(outer_x) * TILE, 0.0, 0.2 * TILE), "外圍街區補給點", _bias_for_block_type(btype, rng))
+	else:
+		# Deep South city blocks beyond the secondary avenue (gz = 9..11)
+		for row_x in [outer_x, mid_x]:
+			for dx in [-1, 0, 1]:
+				var gx: int = clampi(row_x + dx, min_x + 1, max_x - 1)
+				if _is_tile_occupied(gx, 10):
+					continue
+				if btype == "park_alley":
+					var t_asset: String = "tree-park-large" if dx == 0 else "tree-pine-large"
+					_spawn_kenney(t_asset, float(gx), 0.0, 10.2 + rng.randf_range(-0.3, 0.4), rng.randf_range(0.0, 120.0), 1.18)
+				else:
+					var wp: String = "wall-b" if btype == "industrial" else "wall-a"
+					var g_piece: String = wp + ("-garage" if dx == 0 else "-window")
+					_spawn_kenney(g_piece, float(gx), 0.0, 10.5, 0.0, 1.0, Vector3(1.0, 1.0, 1.0))
+					_spawn_kenney(wp + "-window", float(gx), 1.0, 10.5, 0.0)
+					_spawn_kenney(wp + "-roof-slant-detailed" if dx == 0 else wp + "-roof-slant", float(gx), 2.0, 10.5, 0.0)
+			if not _is_tile_occupied(row_x, 9):
+				_spawn_kenney("pallet", float(row_x) + 0.2, 0.0, 9.2, rng.randf_range(-20.0, 20.0), 0.58)
+				if btype != "park_alley" and rng.randf() < 0.65:
+					_spawn_kenney("truck-green-cargo" if btype == "industrial" else "truck-grey", float(clampi(row_x + 2, min_x + 1, max_x - 1)), 0.0, 9.3, 90.0, 1.0, Vector3(1.45, 0.9, 0.85))
+		_register_loot_candidate(bkey, btype, Vector3(float(outer_x) * TILE, 0.0, 9.1 * TILE), "南郊深處補給箱", _bias_for_block_type(btype, rng))
+		_register_loot_candidate(bkey, btype, Vector3(float(mid_x) * TILE, 0.0, 9.0 * TILE), "外環街區物資堆", _bias_for_block_type(btype, rng))
 
 
 func _build_industrial_north(bkey: String, rect: Rect2i, is_west: bool, rng: RandomNumberGenerator) -> void:
@@ -608,32 +660,35 @@ func _build_residential_south(bkey: String, rect: Rect2i, is_west: bool, rng: Ra
 
 
 func _build_street_props_lights_and_cables(rng: RandomNumberGenerator) -> void:
-	var west_cp_x: int = clampi(cross_road_x - 3, -6, -3)
+	var west_cp_x: int = clampi(cross_road_x - 4, -10, -3)
 	var truck_on_north_lane: bool = rng.randf() < 0.5
-	var truck_z: float = 1.15 if truck_on_north_lane else 2.2
-	var barrier_z: float = 2.35 if truck_on_north_lane else 0.75
+	var truck_z: float = 2.15 if truck_on_north_lane else 3.2
+	var barrier_z: float = 3.35 if truck_on_north_lane else 1.75
 
 	_spawn_kenney("truck-flat", float(west_cp_x) - 0.4, 0.0, truck_z, 84.0, 1.0, Vector3(1.55, 1.0, 0.85))
 	_spawn_kenney("detail-barrier-strong-type-a", float(west_cp_x) + 0.9, 0.0, barrier_z, 12.0, 1.0, Vector3(0.68, 0.4, 0.3))
 	_spawn_kenney("detail-barrier-strong-damaged", float(west_cp_x) + 1.65, 0.0, barrier_z + 0.1, -14.0, 1.0, Vector3(0.68, 0.4, 0.3))
-	_spawn_kenney("detail-barrier-type-b", float(west_cp_x) - 0.2, 0.0, 0.45, 20.0)
-	_spawn_kenney("detail-beam", float(west_cp_x) - 1.3, 0.0, 2.55, 62.0)
+	_spawn_kenney("detail-barrier-type-b", float(west_cp_x) - 0.2, 0.0, 1.45, 20.0)
+	_spawn_kenney("detail-beam", float(west_cp_x) - 1.3, 0.0, 3.55, 62.0)
 
-	var open_lane_z: float = 2.0 if truck_on_north_lane else 1.0
+	var open_lane_z: float = 3.0 if truck_on_north_lane else 2.0
 	_register_loot_candidate("AVENUE", "avenue", Vector3(float(west_cp_x) * TILE, 0.0, open_lane_z * TILE), "大道哨卡軍備箱", "fuel")
 
-	var east_cp_x: int = clampi(cross_road_x + 4, 2, 5)
-	_spawn_kenney("detail-barrier-strong-type-b", float(east_cp_x), 0.0, 2.3, -10.0, 1.0, Vector3(0.68, 0.4, 0.3))
-	_spawn_kenney("detail-block", float(east_cp_x) + 0.8, 0.0, 2.25, 8.0, 1.0, Vector3(0.55, 0.5, 0.55))
-	_spawn_kenney("planks", float(east_cp_x) + 0.4, 0.0, 0.5, 32.0)
-	_register_loot_candidate("AVENUE", "avenue", Vector3(float(east_cp_x) * TILE, 0.0, 1.0 * TILE), "東側路障補給箱", "parts")
+	var east_cp_x: int = clampi(cross_road_x + 5, 2, 10)
+	_spawn_kenney("detail-barrier-strong-type-b", float(east_cp_x), 0.0, 3.3, -10.0, 1.0, Vector3(0.68, 0.4, 0.3))
+	_spawn_kenney("detail-block", float(east_cp_x) + 0.8, 0.0, 3.25, 8.0, 1.0, Vector3(0.55, 0.5, 0.55))
+	_spawn_kenney("planks", float(east_cp_x) + 0.4, 0.0, 1.5, 32.0)
+	_register_loot_candidate("AVENUE", "avenue", Vector3(float(east_cp_x) * TILE, 0.0, 2.0 * TILE), "東側路障補給箱", "parts")
 
 	var lamp_specs: Array[Dictionary] = [
-		{"asset": "detail-light-single", "gx": float(clampi(cross_road_x - 4, -6, -3)) - 0.3, "gz": 0.45, "rot": 180.0, "lit": true},
-		{"asset": "detail-light-traffic", "gx": float(cross_road_x) - 0.45, "gz": 0.45, "rot": -90.0, "lit": true},
-		{"asset": "detail-light-single", "gx": float(clampi(cross_road_x + 3, 2, 5)) + 0.3, "gz": 0.45, "rot": 180.0, "lit": true},
-		{"asset": "detail-light-double", "gx": float(clampi(cross_road_x - 2, -5, 1)) - 0.3, "gz": 2.68, "rot": 0.0, "lit": true},
-		{"asset": "detail-light-single", "gx": float(clampi(cross_road_x + 4, 3, 6)) + 0.2, "gz": 2.68, "rot": 0.0, "lit": rng.randf() < 0.65},
+		{"asset": "detail-light-single", "gx": float(clampi(cross_road_x - 8, -13, -6)), "gz": 1.45, "rot": 180.0, "lit": true},
+		{"asset": "detail-light-single", "gx": float(clampi(cross_road_x - 4, -8, -3)) - 0.3, "gz": 1.45, "rot": 180.0, "lit": true},
+		{"asset": "detail-light-traffic", "gx": float(cross_road_x) - 0.45, "gz": 1.45, "rot": -90.0, "lit": true},
+		{"asset": "detail-light-single", "gx": float(clampi(cross_road_x + 4, 2, 8)) + 0.3, "gz": 1.45, "rot": 180.0, "lit": true},
+		{"asset": "detail-light-single", "gx": float(clampi(cross_road_x + 8, 6, 13)), "gz": 1.45, "rot": 180.0, "lit": true},
+		{"asset": "detail-light-double", "gx": float(clampi(cross_road_x - 3, -8, 1)) - 0.3, "gz": 3.68, "rot": 0.0, "lit": true},
+		{"asset": "detail-light-single", "gx": float(clampi(cross_road_x + 5, 3, 10)) + 0.2, "gz": 3.68, "rot": 0.0, "lit": rng.randf() < 0.75},
+		{"asset": "detail-light-double", "gx": float(cross_road_x) - 0.4, "gz": 7.65, "rot": 0.0, "lit": true},
 	]
 	for i in range(lamp_specs.size()):
 		var ls: Dictionary = lamp_specs[i]
@@ -734,9 +789,9 @@ func _finalize_loot_spawn_points(rng: RandomNumberGenerator) -> void:
 	if selected.size() < 8:
 		var road_tiles: Array[Vector2i] = []
 		for gx in range(GRID_MIN_X + 1, GRID_MAX_X):
-			road_tiles.append(Vector2i(gx, 1))
 			road_tiles.append(Vector2i(gx, 2))
-		for gz in range(-2, 6):
+			road_tiles.append(Vector2i(gx, 3))
+		for gz in range(-2, 11):
 			road_tiles.append(Vector2i(cross_road_x, gz))
 			road_tiles.append(Vector2i(cross_road_x + 1, gz))
 		for i in range(road_tiles.size() - 1, 0, -1):
@@ -792,9 +847,9 @@ func _is_valid_loot_pos(pos: Vector3, existing: Array[Dictionary], min_spacing: 
 	if not safe_bounds.has_point(p2):
 		return false
 
-	if pos.z <= -7.6:
+	if pos.z <= -13.2:
 		return false
-	if Vector2(pos.x - player_spawn_pos.x, pos.z - player_spawn_pos.z).length() < 5.2:
+	if Vector2(pos.x - player_spawn_pos.x, pos.z - player_spawn_pos.z).length() < 6.0:
 		return false
 
 	var gx: int = int(round(pos.x / TILE))
@@ -896,7 +951,7 @@ func _spawn_kenney(
 	else:
 		push_warning("SectorGenerator: Missing Kenney GLB %s" % path)
 
-	if collider_tiles.length_squared() > 0.001 and gz > -2.6:
+	if collider_tiles.length_squared() > 0.001 and gz > -3.6:
 		var csize: Vector3 = collider_tiles * TILE
 		_add_invisible_collider(holder, holder.name + "_Col", csize, Vector3(0.0, csize.y * 0.5, 0.0))
 		_record_obstacle_footprint(gx, gz, rot_y_deg, collider_tiles)

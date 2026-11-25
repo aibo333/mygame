@@ -2,7 +2,8 @@ class_name RuinsBaseWorld
 extends Node3D
 
 # Complete Phase 1-5 Integrated World:
-# Procedural Urban Sector × Armored Train Customization × Horde Combat × Missions & Extraction × Meta Save/Hub
+# Procedural Urban Sector × Armored Train Customization × Horde Combat × Missions & Extraction ×
+# Field Fortification Building [B] × Quickbelt [1-5] × Project Zomboid Right-Click Context Menu
 const TILE: float = 3.2
 const KIT: String = "res://assets/packs/kenney_retro_urban/"
 
@@ -22,11 +23,20 @@ var mission_director: MissionDirector = null
 var meta_progression: MetaProgressionManager = null
 var run_flow_overlay: RunFlowOverlay = null
 var stratagem_ui: StratagemInputUi = null
+var build_manager: BuildDefenseManager = null
+var build_menu_ui: BuildMenuUi = null
+var context_menu_ui: ContextMenuUi = null
+var dev_cheat_ui: DevCheatUi = null
 
+var quickbelt_slots: Array[Dictionary] = []
 var current_seed: int = SquadConfig.DEFAULT_SECTOR_SEED
 var current_tier: int = 1
 var run_active: bool = true
 var auto_save_enabled: bool = true
+var spawn_demo_fortifications_on_start: bool = true
+var cheat_god_mode: bool = false
+var cheat_infinite_resources: bool = false
+var cheat_pause_spawns: bool = false
 
 var squad: Array[SquadCharacter] = []
 var active_index: int = 0
@@ -34,12 +44,12 @@ var sync_all_preview: bool = false
 
 var _aim_cursor: MeshInstance3D = null
 var _active_interact_target: Dictionary = {}
+var _pending_context_action: Dictionary = {}
 var _time_elapsed: float = 0.0
-var _hud_compass_timer: float = 0.0
+var _hud_refresh_timer: float = 0.0
 
 
 func _ready() -> void:
-	# Avoid mutating real user save files during headless automated verification
 	auto_save_enabled = not DisplayServer.get_name().to_lower().contains("headless")
 	_setup_retro_urban_environment()
 	_setup_all_systems()
@@ -91,7 +101,7 @@ func _setup_retro_urban_environment() -> void:
 	sun.light_color = Color(1.0, 0.87, 0.72)
 	sun.light_energy = 1.95
 	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 120.0
+	sun.directional_shadow_max_distance = 195.0
 	sun.shadow_bias = 0.03
 	sun.rotation_degrees = Vector3(-44.0, -32.0, 0.0)
 	add_child(sun)
@@ -151,7 +161,23 @@ func _setup_all_systems() -> void:
 	mission_director.objective_ambush_triggered.connect(_on_objective_ambush)
 	mission_director.extraction_succeeded.connect(_on_extraction_succeeded)
 
+	build_manager = BuildDefenseManager.new()
+	build_manager.name = "BuildDefenseManager"
+	env_root.add_child(build_manager)
+	build_manager.setup(vfx_root)
+
+	_reset_quickbelt()
 	_build_aim_cursor()
+
+
+func _reset_quickbelt() -> void:
+	quickbelt_slots = [
+		{"id": "bandage", "icon": "🩹", "name": "繃帶", "count": 2},
+		{"id": "ration", "icon": "🥫", "name": "口糧", "count": 2},
+		{"id": "stim", "icon": "⚡", "name": "興奮劑", "count": 2},
+		{"id": "grenade", "icon": "💣", "name": "手榴彈", "count": 2},
+		{"id": "repair_kit", "icon": "🔧", "name": "修車包", "count": 1},
+	]
 
 
 func _build_aim_cursor() -> void:
@@ -192,6 +218,7 @@ func _setup_squad_and_camera() -> void:
 		girl.interaction_completed.connect(_on_interaction_completed)
 		girl.shot_fired.connect(_on_player_shot_fired)
 		girl.hp_changed.connect(_on_player_hp_changed)
+		girl.vitals_changed.connect(_on_player_vitals_changed)
 		girl.ammo_changed.connect(_on_player_ammo_changed)
 		girl.player_died.connect(_on_player_died)
 		squad.append(girl)
@@ -219,6 +246,9 @@ func _setup_hud_and_overlays() -> void:
 	hud.regenerate_sector_requested.connect(_on_regenerate_sector_requested)
 	hud.train_blueprint_requested.connect(_on_toggle_train_blueprint)
 	hud.hub_requested.connect(_on_toggle_hub_overlay)
+	hud.build_menu_requested.connect(_on_toggle_build_mode)
+	hud.quickbelt_slot_requested.connect(func(idx: int): use_quickbelt_slot(idx))
+	hud.cheat_panel_requested.connect(_on_toggle_dev_cheat_ui)
 	hud.set_active_character(active_index)
 	hud.set_camera_locked(camera_rig.camera_locked)
 	hud.set_camera_orthographic(camera_rig.is_orthographic)
@@ -256,6 +286,31 @@ func _setup_hud_and_overlays() -> void:
 	stratagem_ui.sequence_completed.connect(_on_stratagem_completed)
 	stratagem_ui.sequence_cancelled.connect(_on_stratagem_cancelled)
 
+	build_menu_ui = BuildMenuUi.new()
+	build_menu_ui.name = "BuildMenuUi"
+	add_child(build_menu_ui)
+	build_menu_ui.setup()
+	build_menu_ui.structure_selected.connect(_on_build_structure_selected)
+	build_menu_ui.closed.connect(func():
+		if build_manager != null:
+			build_manager.cancel_placement()
+	)
+
+	context_menu_ui = ContextMenuUi.new()
+	context_menu_ui.name = "ContextMenuUi"
+	add_child(context_menu_ui)
+	context_menu_ui.setup()
+	context_menu_ui.action_selected.connect(_on_context_menu_action)
+
+	dev_cheat_ui = DevCheatUi.new()
+	dev_cheat_ui.name = "DevCheatUi"
+	add_child(dev_cheat_ui)
+	dev_cheat_ui.setup()
+	dev_cheat_ui.cheat_toggled.connect(func(cid: String, enabled: bool): set_cheat(cid, enabled))
+	dev_cheat_ui.clear_zombies_requested.connect(_on_cheat_clear_zombies)
+	dev_cheat_ui.grant_resources_requested.connect(_on_cheat_grant_resources)
+	dev_cheat_ui.spawn_demo_fortifications_requested.connect(_on_cheat_spawn_demo_fortifications)
+
 
 func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: int = -1) -> Dictionary:
 	current_seed = seed_value
@@ -276,12 +331,21 @@ func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: in
 	var bounds: Rect2 = bounds_raw if bounds_raw is Rect2 else SquadConfig.active_playable_bounds
 	SquadConfig.set_playable_bounds(bounds)
 	if camera_rig != null:
-		camera_rig.set_focus_bounds(Rect2(bounds.position.x - 2.0, dock_pos.z - 3.5, bounds.size.x + 4.0, (bounds.end.y - dock_pos.z) + 5.5))
+		camera_rig.set_focus_bounds(Rect2(bounds.position.x - 4.0, dock_pos.z - 6.0, bounds.size.x + 8.0, (bounds.end.y - dock_pos.z) + 10.0))
 
 	if loot_stash_manager != null:
 		if reset_stash:
 			loot_stash_manager.reset_inventory()
 		loot_stash_manager.spawn_loot_points(sector_generator.loot_spawn_points, seed_value)
+
+	if build_manager != null:
+		build_manager.clear_all_structures()
+	if build_menu_ui != null:
+		build_menu_ui.set_open(false)
+	if context_menu_ui != null:
+		context_menu_ui.close()
+
+	_reset_quickbelt()
 
 	var active: SquadCharacter = get_active_character()
 	var spawn_raw: Variant = sector_data.get("player_spawn_pos", Vector3(0.0, 0.0, -8.8))
@@ -290,11 +354,16 @@ func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: in
 		active.global_position = spawn_pos
 		active.clear_showcase_override()
 		active.reset_combat_state()
+		active.god_mode = cheat_god_mode
+		active.infinite_ammo = cheat_infinite_resources
 		if camera_rig != null:
 			camera_rig.set_follow_target(active, true)
 
-	# Start Phase 3 Horde & Phase 4 Mission for this Run
+	if build_manager != null and spawn_demo_fortifications_on_start:
+		build_manager.spawn_demo_fortifications(spawn_pos, bounds)
+
 	if horde_manager != null:
+		horde_manager.spawning_paused = cheat_pause_spawns
 		horde_manager.start_run(
 			seed_value,
 			bounds,
@@ -310,17 +379,196 @@ func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: in
 
 	run_active = true
 	_active_interact_target = {}
+	_pending_context_action = {}
 	if stratagem_ui != null:
 		stratagem_ui.cancel()
 	_sync_hud_state()
+	_refresh_minimap()
 	if hud != null:
 		hud.set_sector_info(current_seed, "%s ｜ %s" % [str(tier_cfg.get("name", "Tier 1")), sector_generator.get_block_summary_text()])
-		hud.push_status("🚂 已進站 %s（Seed #%d）— 完成主線【%s】後返回北方登車區發車撤離！" % [
-			str(tier_cfg.get("name", "Tier 1")),
-			current_seed,
-			mission_director.mission_title if mission_director != null else "",
-		])
+		hud.push_status("🚂 已進站 %s — 右鍵點擊物件開啟選單 ｜ 按 B 建造防禦工事 ｜ 1-5 使用腰帶道具" % str(tier_cfg.get("name", "Tier 1")))
 	return sector_data
+
+
+func use_quickbelt_slot(slot_index: int) -> Dictionary:
+	if slot_index < 0 or slot_index >= quickbelt_slots.size():
+		return {"ok": false, "reason": "invalid_slot"}
+	var slot: Dictionary = quickbelt_slots[slot_index]
+	var cnt: int = int(slot.get("count", 0))
+	if cnt <= 0 and not cheat_infinite_resources:
+		if hud != null:
+			hud.push_status("⚠️ 快速腰帶 [%d] %s 已用完！" % [slot_index + 1, str(slot.get("name", ""))])
+		return {"ok": false, "reason": "empty"}
+
+	var active: SquadCharacter = get_active_character()
+	if active == null or active.is_dead:
+		return {"ok": false, "reason": "player_dead"}
+
+	var item_id: String = str(slot.get("id", ""))
+	match item_id:
+		"bandage":
+			if active.hp >= active.max_hp:
+				if hud != null:
+					hud.push_status("❤️ 生命值已滿，無需使用繃帶")
+				return {"ok": false, "reason": "full_hp"}
+			if not cheat_infinite_resources:
+				slot["count"] = cnt - 1
+			active.heal(40.0)
+			if hud != null:
+				hud.push_status("🩹 使用急救繃帶：恢復 +40 生命值！")
+		"ration":
+			if not cheat_infinite_resources:
+				slot["count"] = cnt - 1
+			active.restore_hunger(45.0)
+			active.restore_stamina(30.0)
+			if hud != null:
+				hud.push_status("🥫 進食野戰口糧：飢餓 +45 ｜ 體力 +30！")
+		"stim":
+			if not cheat_infinite_resources:
+				slot["count"] = cnt - 1
+			active.apply_stimulant(6.0)
+			if hud != null:
+				hud.push_status("⚡ 注射興奮劑：體力回滿並獲得 6 秒疾跑加速！")
+		"grenade":
+			if not cheat_infinite_resources:
+				slot["count"] = cnt - 1
+			var target_pos: Vector3 = _aim_cursor.global_position if _aim_cursor != null else (active.global_position + Vector3(0.0, 0.0, 5.0))
+			_throw_frag_grenade(active.global_position, target_pos)
+			if hud != null:
+				hud.push_status("💣 投擲破片手榴彈！")
+		"repair_kit":
+			if armored_train == null:
+				return {"ok": false, "reason": "no_train"}
+			if not cheat_infinite_resources:
+				slot["count"] = cnt - 1
+			armored_train.repair_hull(200.0)
+			if hud != null:
+				hud.push_status("🔧 使用應急修車包：裝甲列車耐久 +200！")
+		_:
+			return {"ok": false, "reason": "unknown_item"}
+
+	_sync_hud_state()
+	return {"ok": true, "id": item_id, "remaining": int(slot["count"])}
+
+
+func set_cheat(cheat_id: String, enabled: bool) -> void:
+	match cheat_id:
+		"god_mode":
+			cheat_god_mode = enabled
+			for g: SquadCharacter in squad:
+				g.god_mode = enabled
+				if enabled:
+					g.hp = g.max_hp
+					g.stamina = g.max_stamina
+					g.hunger = g.max_hunger
+			if build_manager != null:
+				build_manager.god_mode = enabled
+			if hud != null:
+				hud.push_status("🛡️ [DEV CHEAT] 無敵模式：%s" % ("開啟 ON" if enabled else "關閉 OFF"))
+		"infinite_resources":
+			cheat_infinite_resources = enabled
+			for g: SquadCharacter in squad:
+				g.infinite_ammo = enabled
+				if enabled:
+					g.ammo_in_mag = g.mag_size
+					g.is_reloading = false
+			if build_manager != null:
+				build_manager.infinite_resources = enabled
+			if hud != null:
+				hud.push_status("♾️ [DEV CHEAT] 無限資源：%s" % ("開啟 ON（免費建造／無限彈藥與道具）" if enabled else "關閉 OFF"))
+		"pause_spawns":
+			cheat_pause_spawns = enabled
+			if horde_manager != null:
+				horde_manager.spawning_paused = enabled
+			if hud != null:
+				hud.push_status("⏸️ [DEV CHEAT] 暫停出怪：%s" % ("開啟 ON（已凍結屍潮增援）" if enabled else "關閉 OFF（恢復出怪）"))
+	_sync_hud_state()
+
+
+func toggle_cheat(cheat_id: String) -> bool:
+	var next_val: bool = false
+	match cheat_id:
+		"god_mode":
+			next_val = not cheat_god_mode
+		"infinite_resources":
+			next_val = not cheat_infinite_resources
+		"pause_spawns":
+			next_val = not cheat_pause_spawns
+		_:
+			return false
+	set_cheat(cheat_id, next_val)
+	return next_val
+
+
+func _on_toggle_dev_cheat_ui() -> void:
+	if dev_cheat_ui != null:
+		dev_cheat_ui.toggle_open()
+		dev_cheat_ui.sync_states(cheat_god_mode, cheat_infinite_resources, cheat_pause_spawns)
+
+
+func _on_cheat_clear_zombies() -> void:
+	if horde_manager != null:
+		horde_manager.clear_all_zombies()
+		_sync_hud_state()
+		_refresh_minimap()
+		if hud != null:
+			hud.push_status("🧹 [DEV CHEAT] 已清除場上所有喪屍！")
+
+
+func _on_cheat_grant_resources() -> void:
+	for k: String in LootStashManager.RESOURCE_ORDER:
+		if loot_stash_manager != null:
+			loot_stash_manager.train_stash[k] = int(loot_stash_manager.train_stash.get(k, 0)) + 99
+		if meta_progression != null:
+			meta_progression.warehouse[k] = int(meta_progression.warehouse.get(k, 0)) + 99
+	_sync_hud_state()
+	if hud != null:
+		hud.push_status("📦 [DEV CHEAT] 已向列車暫存倉與總倉庫補給全資源 +99！")
+
+
+func _on_cheat_spawn_demo_fortifications() -> void:
+	if build_manager == null or sector_generator == null:
+		return
+	var active: SquadCharacter = get_active_character()
+	var anchor: Vector3 = active.global_position if active != null else Vector3(0.0, 0.0, -8.8)
+	var cnt: int = build_manager.spawn_demo_fortifications(anchor, sector_generator.world_bounds)
+	_refresh_minimap()
+	if hud != null:
+		hud.push_status("🧱 [DEV CHEAT] 已於角色前方部署全套 %d 種示範工事（沙袋／拒馬／地雷／砲台）！" % cnt)
+
+
+func _throw_frag_grenade(from_pos: Vector3, target_pos: Vector3) -> void:
+	var to_t: Vector3 = Vector3(target_pos.x - from_pos.x, 0.0, target_pos.z - from_pos.z)
+	if to_t.length() > 14.0:
+		target_pos = from_pos + to_t.normalized() * 14.0
+	target_pos.y = 0.0
+
+	if horde_manager != null:
+		for z: ZombieUnit in horde_manager.get_active_zombies():
+			if z.is_alive and Vector2(z.global_position.x - target_pos.x, z.global_position.z - target_pos.z).length() <= 4.5:
+				z.apply_damage(135.0)
+
+	if vfx_root != null and is_inside_tree():
+		var sph: MeshInstance3D = MeshInstance3D.new()
+		var sm: SphereMesh = SphereMesh.new()
+		sm.radius = 0.6
+		sm.height = 1.2
+		sph.mesh = sm
+		var mat: StandardMaterial3D = StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = Color(1.0, 0.56, 0.18, 0.90)
+		mat.emission_enabled = true
+		mat.emission = Color(1.0, 0.45, 0.12)
+		mat.emission_energy_multiplier = 4.6
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		sph.material_override = mat
+		vfx_root.add_child(sph)
+		sph.global_position = target_pos + Vector3(0.0, 0.45, 0.0)
+		var tw: Tween = sph.create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(sph, "scale", Vector3.ONE * 4.5, 0.28)
+		tw.tween_property(mat, "albedo_color:a", 0.0, 0.28)
+		tw.chain().tween_callback(sph.queue_free)
 
 
 func finish_run(victory: bool, fail_reason: String = "") -> Dictionary:
@@ -329,6 +577,10 @@ func finish_run(victory: bool, fail_reason: String = "") -> Dictionary:
 	run_active = false
 	if stratagem_ui != null:
 		stratagem_ui.cancel()
+	if build_menu_ui != null:
+		build_menu_ui.set_open(false)
+	if context_menu_ui != null:
+		context_menu_ui.close()
 	if horde_manager != null:
 		horde_manager.is_active = false
 
@@ -370,6 +622,176 @@ func finish_run(victory: bool, fail_reason: String = "") -> Dictionary:
 	return settlement
 
 
+func _on_toggle_build_mode() -> void:
+	if build_menu_ui == null or build_manager == null or not run_active:
+		return
+	if _is_modal_open():
+		return
+	if stratagem_ui != null:
+		stratagem_ui.cancel()
+	if context_menu_ui != null:
+		context_menu_ui.close()
+	var next_open: bool = not build_menu_ui.is_open()
+	build_menu_ui.set_open(next_open)
+	if next_open:
+		build_manager.start_placement(build_manager.selected_kind)
+		_refresh_build_menu()
+		if hud != null:
+			hud.push_status("🏗 建造模式已開啟：左鍵放置工事 ｜ Q 旋轉角度 ｜ 右鍵或 B/Esc 結束")
+	else:
+		build_manager.cancel_placement()
+
+
+func _on_build_structure_selected(kind: String) -> void:
+	if build_manager != null:
+		build_manager.start_placement(kind)
+		_refresh_build_menu()
+
+
+func _refresh_build_menu() -> void:
+	if build_menu_ui != null and build_manager != null and loot_stash_manager != null:
+		build_menu_ui.refresh(build_manager, loot_stash_manager.backpack, loot_stash_manager.train_stash, build_manager.selected_kind)
+
+
+func open_context_menu_at(screen_pos: Vector2, world_pos: Vector3) -> Array[Dictionary]:
+	if context_menu_ui == null or not run_active:
+		return []
+	var active: SquadCharacter = get_active_character()
+	var title: String = "📍 街區地面"
+	var options: Array[Dictionary] = []
+
+	# 1. Check Mission Objective or Trapped Survivor near right-click
+	if mission_director != null:
+		var m_target: Dictionary = mission_director.find_nearest_interactable(world_pos, 2.8)
+		if not m_target.is_empty():
+			var mk: String = str(m_target.get("kind", ""))
+			title = "🎯 %s" % str(m_target.get("label", "任務目標"))
+			if mk == "mission_objective":
+				options.append({"id": "interact_target", "label": "⚡ 執行主線目標（6 鍵指令）", "payload": {"target": m_target}})
+				options.append({"id": "inspect_mission", "label": "🔍 檢視任務進度", "payload": {}})
+			else:
+				options.append({"id": "interact_target", "label": "💚 救援受困倖存者（5 鍵指令）", "payload": {"target": m_target}})
+
+	# 2. Check Unlooted Loot Crate near right-click
+	if options.is_empty() and loot_stash_manager != null:
+		var loot: Dictionary = loot_stash_manager.find_nearest_unlooted(world_pos, 2.8)
+		if not loot.is_empty():
+			title = "📦 %s" % str(loot.get("label", "物資箱"))
+			var ltarget: Dictionary = {"id": str(loot["id"]), "kind": "loot", "label": str(loot["label"]), "pos": loot["pos"]}
+			options.append({"id": "interact_target", "label": "⚡ 搜刮物資箱（4 鍵指令）", "payload": {"target": ltarget}})
+			options.append({"id": "inspect_loot", "label": "🔍 檢查箱內物資內容", "payload": {"loot_id": str(loot["id"]), "label": str(loot["label"]), "contents": loot["contents"]}})
+
+	# 3. Check Deployed Field Structure near right-click
+	if options.is_empty() and build_manager != null:
+		var st: Dictionary = build_manager.find_nearest_structure(world_pos, 2.6)
+		if not st.is_empty():
+			title = "🧱 %s（耐久 %d/%d）" % [str(st["name"]), int(round(float(st["hp"]))), int(round(float(st["max_hp"])))]
+			options.append({"id": "repair_defense", "label": "🔧 修復此工事（消耗 1 金屬）", "payload": {"sid": str(st["id"]), "pos": st["pos"]}})
+			options.append({"id": "dismantle_defense", "label": "♻️ 拆除並回收廢金屬", "payload": {"sid": str(st["id"]), "pos": st["pos"]}})
+
+	# 4. Check Armored Train Platform / Zones near right-click
+	if options.is_empty() and armored_train != null:
+		var near_train: bool = world_pos.z <= armored_train.position.z + 5.6 or armored_train.is_player_in_boarding_zone(world_pos) or armored_train.is_player_in_stash_zone(world_pos)
+		if near_train:
+			title = "🚂 裝甲列車基地"
+			var stash_target: Dictionary = {"id": "train_stash", "kind": "train_stash", "label": "裝甲列車暫存倉", "pos": armored_train.get_stash_world_pos()}
+			options.append({"id": "interact_target", "label": "📦 卸貨至列車暫存倉（3 鍵指令）", "payload": {"target": stash_target}})
+			options.append({"id": "open_blueprint", "label": "🚂 開啟蒸氣列車設計圖 [T]", "payload": {}})
+			if mission_director != null and mission_director.is_mission_complete and not mission_director.is_extracting:
+				var ext_target: Dictionary = {"id": "boarding_zone", "kind": "boarding_extract", "label": "啟動裝甲列車鍋爐撤離", "pos": armored_train.get_boarding_world_pos()}
+				options.append({"id": "interact_target", "label": "🔥 啟動鍋爐發車撤離（6 鍵指令）", "payload": {"target": ext_target}})
+			options.append({"id": "repair_train_field", "label": "🔧 緊急焊接列車裝甲（+150 HP，需金屬1）", "payload": {"pos": armored_train.get_boarding_world_pos()}})
+
+	# 5. Always include Zomboid-style Walk-To & Field Build actions
+	options.append({"id": "walk_here", "label": "🚶 移動至此處", "payload": {"pos": world_pos}})
+	options.append({"id": "open_build_here", "label": "🏗 在此建造防禦工事 [B]", "payload": {"pos": world_pos}})
+	if active != null and active.hp < 85.0 and int(quickbelt_slots[0]["count"]) > 0:
+		options.append({"id": "quick_use", "label": "🩹 立即包紮傷口（繃帶）", "payload": {"slot": 0}})
+	if active != null and active.hunger < 80.0 and int(quickbelt_slots[1]["count"]) > 0:
+		options.append({"id": "quick_use", "label": "🥫 進食野戰口糧", "payload": {"slot": 1}})
+
+	context_menu_ui.show_menu(screen_pos, title, options)
+	return options
+
+
+func _on_context_menu_action(action_id: String, payload: Dictionary) -> void:
+	var active: SquadCharacter = get_active_character()
+	match action_id:
+		"walk_here":
+			var pos: Vector3 = payload.get("pos", Vector3.ZERO) as Vector3
+			_pending_context_action = {}
+			if active != null:
+				active.set_click_move_target(pos)
+				_spawn_move_ping(pos)
+		"open_build_here":
+			if not build_menu_ui.is_open():
+				_on_toggle_build_mode()
+		"open_blueprint":
+			_on_toggle_train_blueprint()
+		"quick_use":
+			use_quickbelt_slot(int(payload.get("slot", 0)))
+		"inspect_loot":
+			var contents: Dictionary = payload.get("contents", {}) as Dictionary
+			var txt: String = loot_stash_manager.format_resource_dict(contents) if loot_stash_manager != null else ""
+			if hud != null:
+				hud.push_status("🔍 檢查【%s】：內含 %s" % [str(payload.get("label", "物資箱")), txt])
+		"inspect_mission":
+			if hud != null and mission_director != null:
+				hud.push_status("🔍 %s" % mission_director.get_mission_hud_text())
+		"interact_target", "repair_defense", "dismantle_defense", "repair_train_field":
+			var target_pos: Vector3 = payload.get("pos", Vector3.ZERO) as Vector3
+			if action_id == "interact_target":
+				var t: Dictionary = payload.get("target", {}) as Dictionary
+				target_pos = t.get("pos", Vector3.ZERO) as Vector3
+			if active != null and Vector2(active.global_position.x - target_pos.x, active.global_position.z - target_pos.z).length() <= 3.5:
+				_execute_context_action_immediately(action_id, payload)
+			else:
+				_pending_context_action = {"id": action_id, "payload": payload, "pos": target_pos}
+				if active != null:
+					active.set_click_move_target(target_pos)
+					_spawn_move_ping(target_pos)
+				if hud != null:
+					hud.push_status("🚶 正在前往目標位置執行互動...")
+
+
+func _execute_context_action_immediately(action_id: String, payload: Dictionary) -> void:
+	var active: SquadCharacter = get_active_character()
+	match action_id:
+		"interact_target":
+			var target: Dictionary = payload.get("target", {}) as Dictionary
+			_begin_stratagem_for_target(target)
+		"repair_defense":
+			if build_manager != null and loot_stash_manager != null:
+				var res: Dictionary = build_manager.repair_structure(str(payload.get("sid", "")), loot_stash_manager.backpack, loot_stash_manager.train_stash)
+				if hud != null:
+					hud.push_status(str(res.get("message", "")))
+				_sync_hud_state()
+		"dismantle_defense":
+			if build_manager != null and loot_stash_manager != null:
+				var res: Dictionary = build_manager.dismantle_structure(str(payload.get("sid", "")), loot_stash_manager.backpack)
+				if hud != null:
+					hud.push_status(str(res.get("message", "")))
+				_sync_hud_state()
+		"repair_train_field":
+			if armored_train != null and loot_stash_manager != null and build_manager != null:
+				if not cheat_infinite_resources:
+					var pool: Dictionary = build_manager.get_combined_resources(loot_stash_manager.backpack, loot_stash_manager.train_stash)
+					if int(pool.get("scrap", 0)) < 1:
+						if hud != null:
+							hud.push_status("⚠️ 需要至少 1 個廢金屬才能緊急焊接列車裝甲！")
+						return
+					if int(loot_stash_manager.backpack.get("scrap", 0)) >= 1:
+						loot_stash_manager.backpack["scrap"] = int(loot_stash_manager.backpack["scrap"]) - 1
+					else:
+						loot_stash_manager.train_stash["scrap"] = maxi(0, int(loot_stash_manager.train_stash["scrap"]) - 1)
+				armored_train.repair_hull(150.0)
+				if active != null:
+					active.play_stratagem_complete_fx()
+				if hud != null:
+					hud.push_status("🔧 緊急焊接完成！裝甲列車耐久 +150")
+				_sync_hud_state()
+
+
 func _on_deploy_run_requested(tier_num: int, seed_value: int) -> void:
 	generate_new_sector(seed_value, true, tier_num)
 
@@ -384,6 +806,10 @@ func _on_regenerate_sector_requested() -> void:
 func _on_open_hub_overlay() -> void:
 	if train_blueprint_ui != null and train_blueprint_ui.is_open():
 		train_blueprint_ui.set_open(false)
+	if build_menu_ui != null and build_menu_ui.is_open():
+		build_menu_ui.set_open(false)
+	if context_menu_ui != null:
+		context_menu_ui.close()
 	if run_flow_overlay != null:
 		run_flow_overlay.show_hub(meta_progression, train_consist, current_seed)
 
@@ -441,12 +867,63 @@ func _sync_hud_state() -> void:
 	var active: SquadCharacter = get_active_character()
 	if active != null:
 		hud.update_player_vitals(active.hp, active.max_hp, active.ammo_in_mag, active.mag_size, active.is_reloading)
+		hud.update_survival_vitals(active.hp, active.max_hp, active.stamina, active.max_stamina, active.hunger, active.max_hunger)
+	hud.update_quickbelt(quickbelt_slots, cheat_infinite_resources)
+	hud.update_cheat_status(cheat_god_mode, cheat_infinite_resources, cheat_pause_spawns)
+	if dev_cheat_ui != null:
+		dev_cheat_ui.sync_states(cheat_god_mode, cheat_infinite_resources, cheat_pause_spawns)
 	if horde_manager != null:
 		hud.update_run_timer(horde_manager.time_remaining, horde_manager.current_stage_name, horde_manager.total_kills, horde_manager.get_active_zombie_count())
 	if mission_director != null and active != null and armored_train != null:
 		hud.update_mission_status(mission_director.get_mission_hud_text(), mission_director.get_compass_hint(active.global_position, armored_train.get_boarding_world_pos()))
 	if train_blueprint_ui != null and meta_progression != null:
 		train_blueprint_ui.update_stash_reference(meta_progression.warehouse)
+	if build_menu_ui != null and build_menu_ui.is_open():
+		_refresh_build_menu()
+
+
+func _refresh_minimap() -> void:
+	if hud == null or sector_generator == null:
+		return
+	var active: SquadCharacter = get_active_character()
+	var loot_pos: Array[Vector3] = []
+	if loot_stash_manager != null:
+		for e: Dictionary in loot_stash_manager.loot_nodes:
+			if not bool(e.get("looted", false)):
+				loot_pos.append(e["pos"] as Vector3)
+
+	var m_pos: Array[Vector3] = []
+	var has_surv: bool = false
+	var surv_p: Vector3 = Vector3.ZERO
+	if mission_director != null:
+		for obj: Dictionary in mission_director.objective_nodes:
+			if not bool(obj.get("done", false)):
+				m_pos.append(obj["pos"] as Vector3)
+		if not mission_director.survivor_node.is_empty() and not bool(mission_director.survivor_node.get("rescued", false)):
+			has_surv = true
+			surv_p = mission_director.survivor_node["pos"] as Vector3
+
+	var z_pos: Array[Vector3] = []
+	if horde_manager != null:
+		for z: ZombieUnit in horde_manager.get_active_zombies():
+			z_pos.append(z.global_position)
+
+	hud.update_minimap({
+		"bounds": sector_generator.world_bounds,
+		"cross_road_x": sector_generator.cross_road_x,
+		"player_pos": active.global_position if active != null else Vector3.ZERO,
+		"player_yaw": active.get_facing_yaw() if active != null else 0.0,
+		"train_pos": armored_train.position if armored_train != null else SquadConfig.TRAIN_POSITION,
+		"train_half_length": armored_train.get_train_half_length() if armored_train != null else 22.0,
+		"boarding_pos": armored_train.get_boarding_world_pos() if armored_train != null else Vector3.ZERO,
+		"stash_pos": armored_train.get_stash_world_pos() if armored_train != null else Vector3.ZERO,
+		"loot_positions": loot_pos,
+		"mission_positions": m_pos,
+		"has_survivor": has_surv,
+		"survivor_pos": surv_p,
+		"zombie_positions": z_pos,
+		"defense_markers": build_manager.get_minimap_markers() if build_manager != null else [],
+	})
 
 
 func _apply_train_consist_to_world() -> void:
@@ -467,6 +944,10 @@ func _on_train_consist_changed() -> void:
 func _on_toggle_train_blueprint() -> void:
 	if run_flow_overlay != null and run_flow_overlay.is_open():
 		run_flow_overlay.close()
+	if build_menu_ui != null and build_menu_ui.is_open():
+		build_menu_ui.set_open(false)
+	if context_menu_ui != null:
+		context_menu_ui.close()
 	if train_blueprint_ui != null:
 		train_blueprint_ui.toggle_open()
 
@@ -508,17 +989,26 @@ func _on_player_hp_changed(_hp: float, _max_hp: float) -> void:
 	_sync_hud_state()
 
 
+func _on_player_vitals_changed(hp: float, max_hp: float, sta: float, max_sta: float, hun: float, max_hun: float) -> void:
+	if hud != null:
+		hud.update_survival_vitals(hp, max_hp, sta, max_sta, hun, max_hun)
+
+
 func _on_player_ammo_changed(_ammo: int, _mag: int, _rel: bool) -> void:
 	_sync_hud_state()
 
 
 func _on_zombie_attacked_player(damage: float) -> void:
+	if cheat_god_mode:
+		return
 	var active: SquadCharacter = get_active_character()
 	if active != null and run_active:
 		active.take_damage(damage)
 
 
 func _on_zombie_attacked_train(damage: float) -> void:
+	if cheat_god_mode:
+		return
 	if armored_train != null and run_active:
 		var dr: float = float(train_consist.compute_stats().get("damage_reduction", 0.0)) if train_consist != null else 0.0
 		armored_train.apply_hull_damage(damage * (1.0 - dr))
@@ -584,17 +1074,9 @@ func get_active_character() -> SquadCharacter:
 
 
 func _on_hud_action_preview(action_name: String) -> void:
-	if sync_all_preview:
-		for g in squad:
-			g.trigger_preview_action(action_name)
-		if hud != null:
-			hud.push_status("全員同步預覽動作：%s" % _action_zh(action_name))
-	else:
-		var active: SquadCharacter = get_active_character()
-		if active != null:
-			active.trigger_preview_action(action_name)
-			if hud != null:
-				hud.push_status("%s 執行動作：%s" % [active.display_name, _action_zh(action_name)])
+	var active: SquadCharacter = get_active_character()
+	if active != null:
+		active.trigger_preview_action(action_name)
 
 
 func _on_character_action_changed(char_id: String, action_name: String) -> void:
@@ -635,13 +1117,18 @@ func _on_stratagem_cancelled(_target: Dictionary) -> void:
 
 
 func _try_begin_stratagem_interaction() -> void:
-	if stratagem_ui == null or not run_active:
-		return
 	var active: SquadCharacter = get_active_character()
 	if active == null or active.is_dead:
 		return
 	var target: Dictionary = _find_nearest_interaction(active.global_position)
-	if target.is_empty():
+	_begin_stratagem_for_target(target)
+
+
+func _begin_stratagem_for_target(target: Dictionary) -> void:
+	if stratagem_ui == null or not run_active or target.is_empty():
+		return
+	var active: SquadCharacter = get_active_character()
+	if active == null or active.is_dead:
 		return
 
 	var kind: String = str(target.get("kind", ""))
@@ -779,6 +1266,23 @@ func _input(event: InputEvent) -> void:
 		var key: InputEventKey = event as InputEventKey
 		var code: int = key.physical_keycode if key.physical_keycode != KEY_NONE else key.keycode
 
+		if code == KEY_F1 or code == KEY_QUOTELEFT:
+			_on_toggle_dev_cheat_ui()
+			get_viewport().set_input_as_handled()
+			return
+		if code == KEY_F2:
+			toggle_cheat("god_mode")
+			get_viewport().set_input_as_handled()
+			return
+		if code == KEY_F3:
+			toggle_cheat("infinite_resources")
+			get_viewport().set_input_as_handled()
+			return
+		if code == KEY_F4:
+			toggle_cheat("pause_spawns")
+			get_viewport().set_input_as_handled()
+			return
+
 		if code == KEY_T:
 			if stratagem_ui != null:
 				stratagem_ui.cancel()
@@ -791,7 +1295,23 @@ func _input(event: InputEvent) -> void:
 			_on_toggle_hub_overlay()
 			get_viewport().set_input_as_handled()
 			return
+		if code == KEY_B and not _is_modal_open():
+			_on_toggle_build_mode()
+			get_viewport().set_input_as_handled()
+			return
 		if code == KEY_ESCAPE:
+			if context_menu_ui != null and context_menu_ui.is_open():
+				context_menu_ui.close()
+				get_viewport().set_input_as_handled()
+				return
+			if dev_cheat_ui != null and dev_cheat_ui.is_open():
+				dev_cheat_ui.set_open(false)
+				get_viewport().set_input_as_handled()
+				return
+			if build_menu_ui != null and build_menu_ui.is_open():
+				build_menu_ui.set_open(false)
+				get_viewport().set_input_as_handled()
+				return
 			if stratagem_ui != null and stratagem_ui.is_active:
 				stratagem_ui.cancel()
 				get_viewport().set_input_as_handled()
@@ -807,7 +1327,13 @@ func _input(event: InputEvent) -> void:
 		if _is_modal_open():
 			return
 
-		# Intercept Stratagem inputs BEFORE Godot GUI focus navigation can steal Arrow Keys / Space!
+		# Rotate build placement preview with Q
+		if build_manager != null and build_manager.is_placing and code == KEY_Q:
+			build_manager.rotate_placement(45.0)
+			get_viewport().set_input_as_handled()
+			return
+
+		# Intercept Stratagem inputs BEFORE Godot GUI focus navigation
 		if stratagem_ui != null and stratagem_ui.is_active:
 			if code == KEY_SPACE or code == KEY_SHIFT:
 				stratagem_ui.cancel()
@@ -831,11 +1357,20 @@ func _input(event: InputEvent) -> void:
 				_try_begin_stratagem_interaction()
 				get_viewport().set_input_as_handled()
 			KEY_1:
-				select_character(0)
+				use_quickbelt_slot(0)
+				get_viewport().set_input_as_handled()
 			KEY_2:
-				select_character(1)
+				use_quickbelt_slot(1)
+				get_viewport().set_input_as_handled()
 			KEY_3:
-				select_character(2)
+				use_quickbelt_slot(2)
+				get_viewport().set_input_as_handled()
+			KEY_4:
+				use_quickbelt_slot(3)
+				get_viewport().set_input_as_handled()
+			KEY_5:
+				use_quickbelt_slot(4)
+				get_viewport().set_input_as_handled()
 			KEY_R:
 				var active: SquadCharacter = get_active_character()
 				if active != null and active.start_reload() and hud != null:
@@ -848,17 +1383,45 @@ func _input(event: InputEvent) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
-		if _is_modal_open():
+		if _is_modal_open() or (context_menu_ui != null and context_menu_ui.is_open()):
 			return
 		var mb: InputEventMouseButton = event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed and camera_rig != null:
+		if not mb.pressed or camera_rig == null:
+			return
+
+		# Build Mode mouse placement: Left click places structure, Right click exits build mode
+		if build_manager != null and build_manager.is_placing:
+			if mb.button_index == MOUSE_BUTTON_RIGHT:
+				if build_menu_ui != null:
+					build_menu_ui.set_open(false)
+				else:
+					build_manager.cancel_placement()
+				return
+			if mb.button_index == MOUSE_BUTTON_LEFT:
+				var over_ui: bool = (hud != null and hud.is_mouse_over_controls()) or (build_menu_ui != null and build_menu_ui.is_mouse_over()) or (dev_cheat_ui != null and dev_cheat_ui.is_mouse_over())
+				if over_ui:
+					return
+				var place_pos: Vector3 = camera_rig.raycast_ground(mb.position, 0.0)
+				var res: Dictionary = build_manager.try_place_structure(
+					build_manager.selected_kind,
+					place_pos,
+					build_manager.placement_yaw_deg,
+					sector_generator.world_bounds,
+					loot_stash_manager.backpack,
+					loot_stash_manager.train_stash
+				)
+				if hud != null:
+					hud.push_status(str(res.get("message", "")))
+				_sync_hud_state()
+				_refresh_minimap()
+				return
+
+		# Project Zomboid-style Right-Click Context Menu!
+		if mb.button_index == MOUSE_BUTTON_RIGHT:
 			if stratagem_ui != null and stratagem_ui.is_active:
 				stratagem_ui.cancel()
 			var click_pos: Vector3 = camera_rig.raycast_ground(mb.position, 0.0)
-			var active: SquadCharacter = get_active_character()
-			if active != null:
-				active.set_click_move_target(click_pos)
-				_spawn_move_ping(click_pos)
+			open_context_menu_at(mb.position, click_pos)
 
 
 func _physics_process(delta: float) -> void:
@@ -883,6 +1446,10 @@ func _physics_process(delta: float) -> void:
 
 	if _aim_cursor != null:
 		_aim_cursor.global_position = Vector3(aim_pos.x, 0.18, aim_pos.z)
+		_aim_cursor.visible = not (build_manager != null and build_manager.is_placing)
+
+	if build_manager != null and build_manager.is_placing and loot_stash_manager != null:
+		build_manager.update_ghost(aim_pos, sector_generator.world_bounds, loot_stash_manager.backpack, loot_stash_manager.train_stash)
 
 	var axes: Dictionary = camera_rig.get_screen_axes()
 	var cam_right: Vector3 = axes["right"] as Vector3
@@ -891,12 +1458,20 @@ func _physics_process(delta: float) -> void:
 
 	if armored_train != null:
 		armored_train.set_camera_yaw(cam_yaw)
+		var was_inside_cutaway: bool = armored_train.is_interior_cutaway_active()
+		var now_inside: bool = armored_train.is_point_near_or_inside_train(active.global_position)
+		armored_train.set_interior_cutaway(now_inside)
+		if now_inside and not was_inside_cutaway and hud != null:
+			hud.push_status("🚂 已進入裝甲列車內部 — 屋頂自動剖面開啟，可巡視各車廂與值勤火柴人乘員")
 
 	var stratagem_active: bool = (stratagem_ui != null and stratagem_ui.is_active)
+	var context_open: bool = (context_menu_ui != null and context_menu_ui.is_open())
+	var build_placing: bool = (build_manager != null and build_manager.is_placing)
 	var ui_blocking: bool = _is_modal_open() or not run_active
-	camera_rig.input_suppressed = stratagem_active or _is_modal_open()
+	camera_rig.input_suppressed = stratagem_active or _is_modal_open() or context_open
+
 	var move_in: Vector3 = Vector3.ZERO
-	if not ui_blocking and not stratagem_active:
+	if not ui_blocking and not stratagem_active and not context_open:
 		if Input.is_action_pressed("move_forward") or Input.is_physical_key_pressed(KEY_W):
 			move_in += cam_fwd
 		if Input.is_action_pressed("move_back") or Input.is_physical_key_pressed(KEY_S):
@@ -905,11 +1480,12 @@ func _physics_process(delta: float) -> void:
 			move_in -= cam_right
 		if Input.is_action_pressed("move_right") or Input.is_physical_key_pressed(KEY_D):
 			move_in += cam_right
+		if move_in.length_squared() > 0.02:
+			_pending_context_action = {}
 
-	var mouse_over_ui: bool = ui_blocking or (hud != null and hud.is_mouse_over_controls())
+	var mouse_over_ui: bool = ui_blocking or context_open or build_placing or (hud != null and hud.is_mouse_over_controls()) or (build_menu_ui != null and build_menu_ui.is_mouse_over()) or (dev_cheat_ui != null and dev_cheat_ui.is_mouse_over())
 	var want_shoot: bool = (not mouse_over_ui) and (not stratagem_active) and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-	var want_interact: bool = false  # Replaced by Helldivers-style StratagemInputUi on E/F press!
-	var want_roll: bool = (not ui_blocking) and (not stratagem_active) and (Input.is_action_just_pressed("dodge") or Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_SHIFT))
+	var want_roll: bool = (not ui_blocking) and (not stratagem_active) and (not context_open) and (Input.is_action_just_pressed("dodge") or Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_SHIFT))
 
 	_active_interact_target = _find_nearest_interaction(active.global_position)
 	_update_interaction_hud(active.global_position, _active_interact_target)
@@ -919,19 +1495,28 @@ func _physics_process(delta: float) -> void:
 		var g: SquadCharacter = squad[i]
 		g.set_camera_yaw(cam_yaw)
 		if i == active_index:
-			g.update_character(delta, move_in, aim_pos, want_shoot, want_interact, want_roll, nearest_label)
+			g.update_character(delta, move_in, aim_pos, want_shoot, false, want_roll, nearest_label)
 		else:
 			g.update_character(delta, Vector3.ZERO, aim_pos, false, false, false, "")
 
-	# Phase 3 & 4 Live Simulation Tick (paused cleanly when blueprint/hub overlay is open)
+	# Execute pending Zomboid right-click auto-walk interaction once player arrives!
+	if not _pending_context_action.is_empty() and active != null and run_active:
+		var p_pos: Vector3 = _pending_context_action.get("pos", Vector3.ZERO) as Vector3
+		if Vector2(active.global_position.x - p_pos.x, active.global_position.z - p_pos.z).length() <= 3.3:
+			var act_id: String = str(_pending_context_action.get("id", ""))
+			var act_pay: Dictionary = _pending_context_action.get("payload", {}) as Dictionary
+			_pending_context_action = {}
+			_execute_context_action_immediately(act_id, act_pay)
+
 	if run_active and not _is_modal_open():
 		var stats: Dictionary = train_consist.compute_stats()
 		if horde_manager != null:
 			horde_manager.update_horde(delta, active.global_position, not active.is_dead, armored_train, stats, cam_yaw)
+		if build_manager != null and horde_manager != null:
+			build_manager.update_defenses(delta, horde_manager)
 
-		# Passive Medbay healing near train platform & Armory/Mechanic hull auto-repair
 		var heal_rate: float = float(stats.get("heal_rate", 0.0))
-		if heal_rate > 0.0 and active.global_position.z < -7.2:
+		if heal_rate > 0.0 and armored_train != null and active.global_position.z <= armored_train.position.z + 8.5:
 			active.heal(heal_rate * delta)
 		var repair_rate: float = float(stats.get("repair_rate", 0.0))
 		if repair_rate > 0.0 and armored_train != null and armored_train.hull_hp < armored_train.max_hull_hp:
@@ -941,13 +1526,15 @@ func _physics_process(delta: float) -> void:
 			var in_boarding: bool = armored_train.is_player_in_boarding_zone(active.global_position)
 			mission_director.update_extraction(delta, in_boarding)
 
-		_hud_compass_timer -= delta
-		if _hud_compass_timer <= 0.0:
-			_hud_compass_timer = 0.25
+		_hud_refresh_timer -= delta
+		if _hud_refresh_timer <= 0.0:
+			_hud_refresh_timer = 0.16
 			if hud != null:
+				hud.update_survival_vitals(active.hp, active.max_hp, active.stamina, active.max_stamina, active.hunger, active.max_hunger)
 				hud.update_run_timer(horde_manager.time_remaining, horde_manager.current_stage_name, horde_manager.total_kills, horde_manager.get_active_zombie_count())
 				if mission_director != null and armored_train != null:
 					hud.update_mission_status(mission_director.get_mission_hud_text(), mission_director.get_compass_hint(active.global_position, armored_train.get_boarding_world_pos()))
+			_refresh_minimap()
 
 
 func _find_nearest_interaction(pos: Vector3) -> Dictionary:
@@ -993,7 +1580,7 @@ func _update_interaction_hud(player_pos: Vector3, target: Dictionary) -> void:
 	var in_boarding: bool = armored_train != null and armored_train.is_player_in_boarding_zone(player_pos)
 	hud.set_boarding_zone_active(in_boarding)
 
-	if stratagem_ui != null and stratagem_ui.is_active:
+	if (stratagem_ui != null and stratagem_ui.is_active) or (build_menu_ui != null and build_menu_ui.is_open()):
 		hud.set_interact_prompt_text("")
 		return
 
@@ -1004,9 +1591,9 @@ func _update_interaction_hud(player_pos: Vector3, target: Dictionary) -> void:
 	var kind: String = str(target.get("kind", ""))
 	var label: String = str(target.get("label", ""))
 	if kind == "mission_objective":
-		hud.set_interact_prompt_text("[按 E / F] 開始 6 鍵指令：%s" % label, Color(0.98, 0.56, 1.0))
+		hud.set_interact_prompt_text("[E / 右鍵選單] 6 鍵指令：%s" % label, Color(0.98, 0.56, 1.0))
 	elif kind == "survivor_rescue":
-		hud.set_interact_prompt_text("[按 E / F] 開始 5 鍵救援指令：%s" % label, Color(0.42, 1.0, 0.68))
+		hud.set_interact_prompt_text("[E / 右鍵選單] 5 鍵救援：%s" % label, Color(0.42, 1.0, 0.68))
 	elif kind == "loot" and loot_stash_manager != null:
 		if loot_stash_manager.get_backpack_free() <= 0:
 			hud.set_interact_prompt_text("⚠️ 背包已滿 (%d/%d)！請返回裝甲列車暫存倉卸貨" % [
@@ -1014,7 +1601,7 @@ func _update_interaction_hud(player_pos: Vector3, target: Dictionary) -> void:
 				loot_stash_manager.backpack_capacity,
 			], Color(1.0, 0.56, 0.34))
 		else:
-			hud.set_interact_prompt_text("[按 E / F] 開始 4 鍵開箱指令：%s（背包 %d/%d）" % [
+			hud.set_interact_prompt_text("[E / 右鍵選單] 4 鍵開箱：%s（背包 %d/%d）" % [
 				label,
 				loot_stash_manager.get_backpack_used(),
 				loot_stash_manager.backpack_capacity,
@@ -1022,16 +1609,16 @@ func _update_interaction_hud(player_pos: Vector3, target: Dictionary) -> void:
 	elif kind == "train_stash" and loot_stash_manager != null:
 		var carried: int = loot_stash_manager.get_backpack_used()
 		if carried > 0:
-			hud.set_interact_prompt_text("[按 E / F] 開始 3 鍵卸貨指令（存入 %d 件物資）" % carried, Color(1.0, 0.86, 0.38))
+			hud.set_interact_prompt_text("[E / 右鍵選單] 3 鍵卸貨（存入 %d 件物資）" % carried, Color(1.0, 0.86, 0.38))
 		else:
-			hud.set_interact_prompt_text("📦 裝甲列車暫存倉（目前背包無可卸貨的物資）", Color(0.84, 0.80, 0.66))
+			hud.set_interact_prompt_text("📦 裝甲列車暫存倉（右鍵開啟列車選單）", Color(0.84, 0.80, 0.66))
 	elif kind == "boarding_zone":
 		if mission_director != null and mission_director.is_extracting:
 			hud.set_interact_prompt_text("🚂 撤離發車倒數 %.1fs — 請留在登車區！" % mission_director.extraction_remaining, Color(0.42, 1.0, 0.68))
 		elif mission_director != null and mission_director.is_mission_complete:
-			hud.set_interact_prompt_text("[按 E / F] 🚂 開始 6 鍵點火指令・發車撤離！", Color(0.42, 1.0, 0.68))
+			hud.set_interact_prompt_text("[E / 右鍵選單] 🚂 6 鍵點火・啟動鍋爐發車撤離！", Color(0.42, 1.0, 0.68))
 		else:
-			hud.set_interact_prompt_text("[按 E / F] 開啟【蒸氣列車設計圖】（或按 T）", Color(0.42, 0.98, 0.72))
+			hud.set_interact_prompt_text("[E / T / 右鍵選單] 開啟【蒸氣列車設計圖】", Color(0.42, 0.98, 0.72))
 	else:
 		hud.set_interact_hint(label)
 
@@ -1060,17 +1647,3 @@ func _spawn_move_ping(pos: Vector3) -> void:
 	tw.tween_property(ping, "scale", Vector3.ONE * 2.2, 0.28)
 	tw.tween_property(mat, "albedo_color:a", 0.0, 0.28)
 	tw.chain().tween_callback(ping.queue_free)
-
-
-func _action_zh(action_name: String) -> String:
-	match action_name:
-		"walk":
-			return "走路"
-		"shoot":
-			return "開槍"
-		"interact":
-			return "搜刮／操作"
-		"roll":
-			return "翻滾"
-		_:
-			return "待機"

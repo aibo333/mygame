@@ -7,7 +7,7 @@ signal run_timer_updated(remaining_sec: float, total_sec: float, stage_name: Str
 signal overtime_triggered()
 
 const POOL_SIZE: int = 36
-const TURRET_RANGE: float = 19.5
+const TURRET_RANGE: float = 30.0
 
 var total_run_duration: float = 360.0
 var time_remaining: float = 360.0
@@ -17,6 +17,7 @@ var current_stage_name: String = "階段 1：靜默進站"
 var is_extraction_holdout: bool = false
 var is_overtime: bool = false
 var is_active: bool = true
+var spawning_paused: bool = false
 var total_kills: int = 0
 
 var _pool: Array[ZombieUnit] = []
@@ -113,6 +114,8 @@ func spawn_zombie(archetype: String, pos: Vector3) -> ZombieUnit:
 
 
 func spawn_wave(count: int, include_specials: bool = true) -> int:
+	if spawning_paused:
+		return 0
 	var spawned: int = 0
 	for _i in range(count):
 		var spawn_pos: Vector3 = _pick_perimeter_spawn_pos()
@@ -123,6 +126,8 @@ func spawn_wave(count: int, include_specials: bool = true) -> int:
 
 
 func spawn_local_ambush(center_pos: Vector3, count: int = 4) -> int:
+	if spawning_paused:
+		return 0
 	var spawned: int = 0
 	for i in range(count):
 		var ang: float = float(i) * (TAU / maxf(1.0, float(count))) + _rng.randf_range(-0.35, 0.35)
@@ -162,25 +167,26 @@ func update_horde(
 	run_timer_updated.emit(time_remaining, total_run_duration, current_stage_name)
 
 	# 2. Periodic Spawns & Horde Waves
-	var desired_cap: int = mini(POOL_SIZE, int(round((7.0 + float(current_stage) * 4.5) * difficulty_mult)))
-	if is_extraction_holdout or is_overtime:
-		desired_cap = mini(POOL_SIZE, int(round(22.0 * difficulty_mult)))
-
-	_spawn_timer -= delta
-	if _spawn_timer <= 0.0:
-		var interval: float = 4.6 if current_stage == 1 else (3.1 if current_stage == 2 else 2.0)
+	if not spawning_paused:
+		var desired_cap: int = mini(POOL_SIZE, int(round((7.0 + float(current_stage) * 4.5) * difficulty_mult)))
 		if is_extraction_holdout or is_overtime:
-			interval = 1.15
-		_spawn_timer = interval / maxf(0.7, difficulty_mult)
-		if get_active_zombie_count() < desired_cap:
-			spawn_zombie(_pick_archetype(current_stage >= 2 or is_extraction_holdout), _pick_perimeter_spawn_pos())
+			desired_cap = mini(POOL_SIZE, int(round(22.0 * difficulty_mult)))
 
-	_wave_timer -= delta
-	if _wave_timer <= 0.0:
-		_wave_timer = 14.0 if (is_extraction_holdout or is_overtime) else (28.0 if current_stage >= 2 else 36.0)
-		var wave_cnt: int = int(round((3.0 + float(current_stage) * 1.5) * difficulty_mult))
-		if get_active_zombie_count() < POOL_SIZE - 2:
-			spawn_wave(mini(wave_cnt, POOL_SIZE - get_active_zombie_count()), current_stage >= 2 or is_extraction_holdout)
+		_spawn_timer -= delta
+		if _spawn_timer <= 0.0:
+			var interval: float = 4.6 if current_stage == 1 else (3.1 if current_stage == 2 else 2.0)
+			if is_extraction_holdout or is_overtime:
+				interval = 1.15
+			_spawn_timer = interval / maxf(0.7, difficulty_mult)
+			if get_active_zombie_count() < desired_cap:
+				spawn_zombie(_pick_archetype(current_stage >= 2 or is_extraction_holdout), _pick_perimeter_spawn_pos())
+
+		_wave_timer -= delta
+		if _wave_timer <= 0.0:
+			_wave_timer = 14.0 if (is_extraction_holdout or is_overtime) else (28.0 if current_stage >= 2 else 36.0)
+			var wave_cnt: int = int(round((3.0 + float(current_stage) * 1.5) * difficulty_mult))
+			if get_active_zombie_count() < POOL_SIZE - 2:
+				spawn_wave(mini(wave_cnt, POOL_SIZE - get_active_zombie_count()), current_stage >= 2 or is_extraction_holdout)
 
 	# 3. Tick all active zombies
 	var train_target: Vector3 = train.get_boarding_world_pos() if train != null else Vector3(0.0, 0.0, -11.3)

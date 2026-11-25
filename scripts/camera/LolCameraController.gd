@@ -5,11 +5,11 @@ signal lock_mode_changed(locked: bool)
 signal projection_mode_changed(is_ortho: bool)
 
 @export var pitch_degrees: float = -38.0
-@export var default_distance: float = 25.0
+@export var default_distance: float = 26.0
 @export var min_distance: float = 10.0
-@export var max_distance: float = 42.0
-@export var zoom_step: float = 1.8
-@export var pan_speed: float = 19.0
+@export var max_distance: float = 58.0
+@export var zoom_step: float = 2.0
+@export var pan_speed: float = 24.0
 @export var edge_pan_margin: float = 18.0
 @export var edge_pan_enabled: bool = false
 @export var follow_smoothness: float = 9.0
@@ -39,7 +39,7 @@ func _ready() -> void:
 	camera.fov = 34.0
 	camera.size = 17.5
 	camera.near = 0.2
-	camera.far = 260.0
+	camera.far = 360.0
 	camera.current = true
 	add_child(camera)
 
@@ -190,7 +190,7 @@ func _apply_camera_transform() -> void:
 	var yaw_rad: float = deg_to_rad(current_yaw_deg)
 	var dist: float = 54.0 if is_orthographic else current_distance
 	if is_orthographic:
-		camera.size = clampf(current_distance * 0.96, 10.0, 38.0)
+		camera.size = clampf(current_distance * 0.96, 10.0, 48.0)
 
 	var horiz: float = cos(pitch_rad) * dist
 	var offset := Vector3(

@@ -5,6 +5,7 @@ signal action_changed(char_id: String, action_name: String)
 signal interaction_completed(char_id: String, station_label: String)
 signal shot_fired(muzzle_pos: Vector3, shot_dir: Vector3, damage: float)
 signal hp_changed(current_hp: float, max_hp: float)
+signal vitals_changed(hp: float, max_hp: float, stamina: float, max_stamina: float, hunger: float, max_hunger: float)
 signal ammo_changed(ammo_in_mag: int, mag_size: int, is_reloading: bool)
 signal player_died()
 
@@ -32,10 +33,17 @@ var spread_deg: float = 2.5
 var bullet_damage: float = 28.0
 var max_hp: float = 100.0
 var hp: float = 100.0
+var max_stamina: float = 100.0
+var stamina: float = 100.0
+var max_hunger: float = 100.0
+var hunger: float = 100.0
 var mag_size: int = 30
 var ammo_in_mag: int = 30
 var is_reloading: bool = false
 var is_dead: bool = false
+var god_mode: bool = false
+var infinite_ammo: bool = false
+var _stim_timer: float = 0.0
 
 var is_active_player: bool = true
 var current_action: String = "idle"  # "idle", "walk", "shoot", "interact", "roll"
@@ -442,6 +450,11 @@ func trigger_preview_action(action_name: String) -> void:
 func start_roll(direction: Vector3) -> bool:
 	if is_dead or _roll_timer > 0.0 or _roll_cd > 0.0:
 		return false
+	if showcase_override_action.is_empty() and not god_mode and stamina < 18.0:
+		return false
+	if showcase_override_action.is_empty() and not god_mode:
+		stamina = maxf(0.0, stamina - 24.0)
+		vitals_changed.emit(hp, max_hp, stamina, max_stamina, hunger, max_hunger)
 	var dir := Vector3(direction.x, 0.0, direction.z)
 	if dir.length_squared() < 0.001:
 		dir = Vector3(-sin(_facing_yaw), 0.0, -cos(_facing_yaw))
@@ -456,19 +469,27 @@ func start_roll(direction: Vector3) -> bool:
 	return true
 
 
+func get_facing_yaw() -> float:
+	return _facing_yaw
+
+
 func is_invulnerable() -> bool:
-	return _iframe_timer > 0.0
+	return god_mode or _iframe_timer > 0.0
 
 
 func reset_combat_state() -> void:
 	is_dead = false
 	hp = max_hp
+	stamina = max_stamina
+	hunger = max_hunger
+	_stim_timer = 0.0
 	ammo_in_mag = mag_size
 	is_reloading = false
 	_reload_timer = 0.0
 	_iframe_timer = 0.0
 	_interact_progress = 0.0
 	hp_changed.emit(hp, max_hp)
+	vitals_changed.emit(hp, max_hp, stamina, max_stamina, hunger, max_hunger)
 	ammo_changed.emit(ammo_in_mag, mag_size, is_reloading)
 
 
@@ -479,6 +500,7 @@ func take_damage(amount: float) -> bool:
 	_iframe_timer = 0.22
 	_spawn_dust_puff(global_position + Vector3(0.0, 1.0, 0.0), Color(1.0, 0.26, 0.22, 0.85), 3)
 	hp_changed.emit(hp, max_hp)
+	vitals_changed.emit(hp, max_hp, stamina, max_stamina, hunger, max_hunger)
 	if hp <= 0.0:
 		is_dead = true
 		velocity = Vector3.ZERO
@@ -492,6 +514,30 @@ func heal(amount: float) -> void:
 		return
 	hp = minf(max_hp, hp + amount)
 	hp_changed.emit(hp, max_hp)
+	vitals_changed.emit(hp, max_hp, stamina, max_stamina, hunger, max_hunger)
+
+
+func restore_stamina(amount: float) -> void:
+	if is_dead or amount <= 0.0:
+		return
+	stamina = minf(max_stamina, stamina + amount)
+	vitals_changed.emit(hp, max_hp, stamina, max_stamina, hunger, max_hunger)
+
+
+func restore_hunger(amount: float) -> void:
+	if is_dead or amount <= 0.0:
+		return
+	hunger = minf(max_hunger, hunger + amount)
+	vitals_changed.emit(hp, max_hp, stamina, max_stamina, hunger, max_hunger)
+
+
+func apply_stimulant(duration_sec: float = 6.0) -> void:
+	if is_dead:
+		return
+	_stim_timer = maxf(_stim_timer, duration_sec)
+	stamina = max_stamina
+	vitals_changed.emit(hp, max_hp, stamina, max_stamina, hunger, max_hunger)
+	_spawn_dust_puff(global_position + Vector3(0.0, 0.9, 0.0), Color(0.40, 0.96, 1.0, 0.85), 4)
 
 
 func start_reload() -> bool:
@@ -539,6 +585,19 @@ func update_character(
 		velocity = Vector3.ZERO
 		_set_interact_bar_visible(false)
 		return
+
+	# Survival vitals tick: gradual hunger drain & stamina regen
+	_stim_timer = maxf(0.0, _stim_timer - delta)
+	if god_mode:
+		hp = max_hp
+		stamina = max_stamina
+		hunger = max_hunger
+	else:
+		hunger = maxf(0.0, hunger - delta * 0.36)
+		var well_fed_mult: float = 1.0 if hunger >= 20.0 else 0.45
+		var regen_rate: float = (18.0 if current_action == "idle" else 10.0) * well_fed_mult
+		if _roll_timer <= 0.0:
+			stamina = minf(max_stamina, stamina + regen_rate * delta)
 
 	if _muzzle_flash_timer > 0.0:
 		_muzzle_flash_timer = maxf(0.0, _muzzle_flash_timer - delta)
@@ -627,7 +686,8 @@ func _update_active_player(
 			_has_click_move = false
 
 	if move_vec.length_squared() > 0.01:
-		velocity = move_vec * move_speed
+		var spd_mult: float = 1.30 if _stim_timer > 0.0 else (0.86 if hunger <= 5.0 else 1.0)
+		velocity = move_vec * (move_speed * spd_mult)
 		move_and_slide()
 		global_position = SquadConfig.clamp_playable(Vector3(global_position.x, 0.0, global_position.z))
 		_facing_yaw = atan2(-move_vec.x, -move_vec.z)
@@ -676,13 +736,16 @@ func _try_fire_weapon(target_world_pos: Vector3) -> void:
 	if _fire_cd > 0.0 or is_reloading:
 		return
 	if showcase_override_action.is_empty():
-		if ammo_in_mag <= 0:
-			start_reload()
-			return
-		ammo_in_mag -= 1
-		ammo_changed.emit(ammo_in_mag, mag_size, false)
-		if ammo_in_mag <= 0:
-			start_reload()
+		if infinite_ammo:
+			ammo_in_mag = mag_size
+		else:
+			if ammo_in_mag <= 0:
+				start_reload()
+				return
+			ammo_in_mag -= 1
+			ammo_changed.emit(ammo_in_mag, mag_size, false)
+			if ammo_in_mag <= 0:
+				start_reload()
 
 	_fire_cd = fire_interval
 	_muzzle_flash_timer = 0.07

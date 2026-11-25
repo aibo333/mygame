@@ -121,7 +121,7 @@ func start_mission(seed_value: int, loot_points: Array[Dictionary], existing_cre
 	var used_positions: Array[Vector3] = []
 	for i in range(target_count):
 		var base_p: Vector3 = candidates[i % candidates.size()]
-		var obj_pos: Vector3 = Vector3(base_p.x + 1.3, 0.0, clampf(base_p.z - 0.8, -5.0, 16.5))
+		var obj_pos: Vector3 = SquadConfig.clamp_playable(Vector3(base_p.x + 1.3, 0.0, maxf(base_p.z - 0.8, -10.0)))
 		used_positions.append(obj_pos)
 		var oid: String = "obj_%02d" % (i + 1)
 		var olabel: String = _objective_label(i + 1)
@@ -140,7 +140,7 @@ func start_mission(seed_value: int, loot_points: Array[Dictionary], existing_cre
 	var candidate_crew: Dictionary = _pick_recruitable_survivor(existing_crew_ids, rng)
 	if not candidate_crew.is_empty():
 		var s_base: Vector3 = candidates[mini(target_count, candidates.size() - 1)]
-		var s_pos: Vector3 = Vector3(s_base.x - 1.4, 0.0, clampf(s_base.z + 0.6, -4.0, 16.5))
+		var s_pos: Vector3 = SquadConfig.clamp_playable(Vector3(s_base.x - 1.4, 0.0, maxf(s_base.z + 0.6, -9.0)))
 		var svis: Dictionary = _build_objective_prop("survivor_sos", s_pos, Color(0.32, 0.98, 0.66), true)
 		survivor_node = {
 			"id": "survivor_sos",
@@ -151,6 +151,7 @@ func start_mission(seed_value: int, loot_points: Array[Dictionary], existing_cre
 			"node": svis["node"],
 			"beacon": svis["beacon"],
 			"ring": svis["ring"],
+			"stickman": svis.get("stickman", {}),
 		}
 	else:
 		survivor_node = {}
@@ -302,8 +303,16 @@ func animate_markers(time_elapsed: float) -> void:
 	if not survivor_node.is_empty() and not bool(survivor_node.get("rescued", false)):
 		var sb: MeshInstance3D = survivor_node.get("beacon", null) as MeshInstance3D
 		if sb != null and is_instance_valid(sb):
-			sb.position.y = 1.65 + sin(time_elapsed * 3.6) * 0.16
+			sb.position.y = 2.25 + sin(time_elapsed * 3.6) * 0.16
 			sb.rotation.y = fmod(time_elapsed * 2.0, TAU)
+		var sm: Dictionary = survivor_node.get("stickman", {}) as Dictionary
+		if not sm.is_empty():
+			var la: Node3D = sm.get("left_arm", null) as Node3D
+			var ra: Node3D = sm.get("right_arm", null) as Node3D
+			if la != null and is_instance_valid(la):
+				la.rotation_degrees.z = -155.0 + sin(time_elapsed * 6.5) * 22.0
+			if ra != null and is_instance_valid(ra):
+				ra.rotation_degrees.z = 155.0 - sin(time_elapsed * 6.5) * 22.0
 
 
 func _direction_arrow(v: Vector2) -> String:
@@ -370,26 +379,33 @@ func _build_objective_prop(node_id: String, pos: Vector3, color: Color, is_survi
 	ring.material_override = rmat
 	holder.add_child(ring)
 
-	var base_mesh: MeshInstance3D = MeshInstance3D.new()
+	var stickman: Dictionary = {}
 	if is_survivor:
-		var cap: CapsuleMesh = CapsuleMesh.new()
-		cap.radius = 0.30
-		cap.height = 1.35
-		base_mesh.mesh = cap
-		base_mesh.position = Vector3(0.0, 0.72, 0.0)
+		stickman = StickmanFactory.create_stickman({
+			"name": "SurvivorStickman",
+			"body_color": Color(0.18, 0.22, 0.26),
+			"head_color": Color(0.96, 0.94, 0.88),
+			"accent_color": color,
+			"limb_thickness": 0.068,
+			"accessory": "backpack",
+		})
+		var sm_root: Node3D = stickman["root"] as Node3D
+		sm_root.scale = Vector3.ONE * 1.08
+		holder.add_child(sm_root)
 	else:
+		var base_mesh: MeshInstance3D = MeshInstance3D.new()
 		var cyl: CylinderMesh = CylinderMesh.new()
 		cyl.top_radius = 0.36
 		cyl.bottom_radius = 0.44
 		cyl.height = 1.15
 		base_mesh.mesh = cyl
 		base_mesh.position = Vector3(0.0, 0.58, 0.0)
-	var bmat: StandardMaterial3D = StandardMaterial3D.new()
-	bmat.albedo_color = color.darkened(0.28)
-	bmat.metallic = 0.4
-	bmat.roughness = 0.45
-	base_mesh.material_override = bmat
-	holder.add_child(base_mesh)
+		var bmat: StandardMaterial3D = StandardMaterial3D.new()
+		bmat.albedo_color = color.darkened(0.28)
+		bmat.metallic = 0.4
+		bmat.roughness = 0.45
+		base_mesh.material_override = bmat
+		holder.add_child(base_mesh)
 
 	var beacon: MeshInstance3D = MeshInstance3D.new()
 	var sph: SphereMesh = SphereMesh.new()
@@ -398,7 +414,7 @@ func _build_objective_prop(node_id: String, pos: Vector3, color: Color, is_survi
 	sph.radial_segments = 6
 	sph.rings = 3
 	beacon.mesh = sph
-	beacon.position = Vector3(0.0, 1.6, 0.0)
+	beacon.position = Vector3(0.0, 2.25 if is_survivor else 1.6, 0.0)
 	var emat: StandardMaterial3D = StandardMaterial3D.new()
 	emat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	emat.albedo_color = color
@@ -408,7 +424,7 @@ func _build_objective_prop(node_id: String, pos: Vector3, color: Color, is_survi
 	beacon.material_override = emat
 	holder.add_child(beacon)
 
-	return {"node": holder, "ring": ring, "beacon": beacon}
+	return {"node": holder, "ring": ring, "beacon": beacon, "stickman": stickman}
 
 
 func _dim_objective_visual(entry: Dictionary) -> void:
