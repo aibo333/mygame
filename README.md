@@ -4,7 +4,7 @@
 >
 > 技術管線採用 **Godot 4** × **Kenney Retro Urban Kit 模組化街區** × **現成 3D 人形角色與 Adobe Mixamo 動捕骨骼重定向（`SkeletonProfileHumanoid`）**，並以 **GitHub 純原始碼 ＋ Google Drive 外部素材包** 進行異地開發。
 >
-> - **完整企劃書**：[docs/GDD.md](docs/GDD.md) ｜ **領域名詞表**：[GLOSSARY.md](GLOSSARY.md) ｜ **架構決策**：[ADR-0005](docs/adr/0005-gameplay-pivot-train-extraction-horde-and-external-assets.md) ｜ **素材清單**：[ASSETS.md](ASSETS.md)
+> - **完整企劃書**：[docs/GDD.md](docs/GDD.md) ｜ **領域名詞表**：[GLOSSARY.md](GLOSSARY.md) ｜ **架構決策**：[ADR-0005](docs/adr/0005-gameplay-pivot-train-extraction-horde-and-external-assets.md) · [ADR-0006](docs/adr/0006-uncharted-waters-inspired-train-carriage-customization.md) ｜ **素材清單**：[ASSETS.md](ASSETS.md)
 > - *(歷史原型封存標籤：`v0.2-web-prototype` 為早期 Three.js 網頁版；`v0.3-medieval-godot-prototype` 為中世紀戰意 TPS 原型。)*
 
 ## 核心玩法概覽
@@ -88,7 +88,7 @@
 
 ## 開發進度與路線圖（詳見 [docs/GDD.md](docs/GDD.md)）
 - **Phase 1（已完成）**：Godot 4 基礎架構、Kenney 都市街區、單人角色 × Mixamo 骨骼重定向、雙視角切換、GitHub × Google Drive 碼圖分離流程。
-- **Phase 2（進行中規劃）**：Seed 驅動隨機街區生成器、裝甲火車基地地標與登車／暫存區。
-- **Phase 3**：限時倒數、喪屍群 AI 與漸進式屍潮波次、戰鬥血量／彈藥／火車砲塔支援。
-- **Phase 4**：主線任務（燃料回收／訊號修復／物資奪還）、撤離發車守點與單局結算、受困 NPC 救援事件。
-- **Phase 5**：周回整備介面、本機存檔、NPC 乘員名冊與車廂崗位指派、裝甲火車強化樹。
+- **Phase 2（已完成）**：Seed 驅動隨機街區生成器、裝甲火車基地地標（登車區／暫存倉／3D 血條）、局內搜刮點與背包卸貨入庫流程。
+- **Phase 3（已完成）**：限時倒數、4 種喪屍原型（Walker／Runner／Brute／Bloater）物件池與漸進式屍潮波次、玩家血量／彈匣換彈／翻滾無敵幀、列車車頂自動砲塔實戰開火。
+- **Phase 4（已完成）**：3 種主線任務（燃料回收／訊號修復／黑盒奪還）與 HUD 羅盤指引、受困倖存者救援、啟動鍋爐撤離守點與單局風險結算。
+- **Phase 5（已完成）**：參考《大航海時代》船隻／船艙設計的**暖羊皮紙蒸氣武裝列車改造藍圖**（火車頭改造、車廂擴建、車頂武裝＋雙內部艙格改裝、成員入艙適性）、多難度區域選擇（Tier 1～3）與 `user://mygame_save.json` 本機持久化存檔。

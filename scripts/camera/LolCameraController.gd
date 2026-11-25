@@ -22,6 +22,8 @@ var focus_point: Vector3 = Vector3(0.0, 0.0, 3.0)
 var target_distance: float = 21.0
 var current_distance: float = 21.0
 var current_yaw_deg: float = 40.0
+var focus_bounds: Rect2 = Rect2(-25.5, -18.5, 49.0, 38.5)
+var input_suppressed: bool = false
 
 var _middle_dragging: bool = false
 var _last_drag_pos: Vector2 = Vector2.ZERO
@@ -113,11 +115,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_clamp_focus()
 	elif event is InputEventKey and event.pressed and not event.echo:
 		var key := event as InputEventKey
-		if key.keycode == KEY_Y:
+		var code: int = key.physical_keycode if key.physical_keycode != KEY_NONE else key.keycode
+		if input_suppressed:
+			return
+		if code == KEY_Y:
 			toggle_camera_lock()
-		elif key.keycode == KEY_O:
+		elif code == KEY_O:
 			toggle_projection_mode()
-		elif key.keycode == KEY_HOME or key.keycode == KEY_C:
+		elif code == KEY_HOME or code == KEY_C:
 			recenter_on_target()
 
 
@@ -132,14 +137,15 @@ func _process(delta: float) -> void:
 		focus_point = focus_point.lerp(desired, clampf(delta * follow_smoothness, 0.0, 1.0))
 	else:
 		var pan_dir := Vector2.ZERO
-		if Input.is_key_pressed(KEY_LEFT):
-			pan_dir.x -= 1.0
-		if Input.is_key_pressed(KEY_RIGHT):
-			pan_dir.x += 1.0
-		if Input.is_key_pressed(KEY_UP):
-			pan_dir.y += 1.0
-		if Input.is_key_pressed(KEY_DOWN):
-			pan_dir.y -= 1.0
+		if not input_suppressed:
+			if Input.is_key_pressed(KEY_LEFT):
+				pan_dir.x -= 1.0
+			if Input.is_key_pressed(KEY_RIGHT):
+				pan_dir.x += 1.0
+			if Input.is_key_pressed(KEY_UP):
+				pan_dir.y += 1.0
+			if Input.is_key_pressed(KEY_DOWN):
+				pan_dir.y -= 1.0
 
 		if edge_pan_enabled and pan_dir.length_squared() < 0.01:
 			var vp := get_viewport()
@@ -165,9 +171,15 @@ func _process(delta: float) -> void:
 	_apply_camera_transform()
 
 
+func set_focus_bounds(bounds: Rect2) -> void:
+	if bounds.size.x > 1.0 and bounds.size.y > 1.0:
+		focus_bounds = bounds
+		_clamp_focus()
+
+
 func _clamp_focus() -> void:
-	focus_point.x = clampf(focus_point.x, -26.0, 26.0)
-	focus_point.z = clampf(focus_point.z, -18.0, 20.0)
+	focus_point.x = clampf(focus_point.x, focus_bounds.position.x, focus_bounds.end.x)
+	focus_point.z = clampf(focus_point.z, focus_bounds.position.y, focus_bounds.end.y)
 
 
 func _apply_camera_transform() -> void:

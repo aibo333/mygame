@@ -43,8 +43,24 @@ A non-player specialist rescued or recruited across Runs and assigned to a stati
 _Avoid_: Companion, squadmate, follower, ally
 
 **Train Upgrade（火車強化）**:
-A permanent structural, defensive, engine, armory, or cargo enhancement installed on the Armored Train between Runs using extracted Resources.
+A permanent enhancement installed on the Armored Train between Runs using extracted Resources, encompassing Locomotive Refits, Carriage Expansions, and Carriage Refits.
 _Avoid_: Buff, perk, level-up
+
+**Locomotive（裝甲火車頭）**:
+The lead engine unit of the Armored Train whose upgrades determine maximum towed Carriage count, Power Budget, base Hull HP, Extraction warm-up speed, and reachable Sector tiers.
+_Avoid_: Head car, front truck
+
+**Carriage（掛接車廂）**:
+An individual modular train car coupled behind the Locomotive. Carriages can be newly expanded (within traction limits), reordered, and refitted into specialized functional types (Turret, Cargo, Medbay, Armory, Recon, Quarters, Generator).
+_Avoid_: Room, cabin, compartment, wagon
+
+**Carriage Refit（車廂改造）**:
+Converting or upgrading a coupled Carriage into a specific functional role, analogous to cabin refitting in *Uncharted Waters*, creating strategic trade-offs in firepower, cargo capacity, survivability, and recon.
+_Avoid_: Respec, rebuild
+
+**Crew Station（車廂崗位槽）**:
+An assignment slot inside the Locomotive or a refitted Carriage where a Crew Member can be stationed to activate or amplify that unit's bonuses based on role affinity.
+_Avoid_: Seat, socket, party slot
 
 **Resource（戰利品資源）**:
 Salvageable materials (such as scrap, parts, fuel, and supplies) collected during a Run to sustain survival and fund Train Upgrades between Runs.

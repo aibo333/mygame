@@ -1,12 +1,13 @@
 class_name SquadConfig
 extends RefCounted
 
-const WORLD_MIN_X: float = -24.0
-const WORLD_MAX_X: float = 24.0
-const WORLD_MIN_Z: float = -16.0
+const WORLD_MIN_X: float = -23.5
+const WORLD_MAX_X: float = 21.5
+const WORLD_MIN_Z: float = -12.2
 const WORLD_MAX_Z: float = 18.0
 
-const TRAIN_POSITION: Vector3 = Vector3(0.0, 0.0, -9.2)
+const TRAIN_POSITION: Vector3 = Vector3(0.0, 0.0, -14.72)
+const DEFAULT_SECTOR_SEED: int = 20261125
 const KENNEY_DIR: String = "res://assets/packs/kenney_retro_urban/"
 const AVATAR_DIR: String = "res://assets/packs/summer_cuteness_avatar/Avatar_Female_Size01_SummerCuteness_UI/"
 const AVATAR_FBX_PATH: String = "res://assets/packs/summer_cuteness_avatar/Avatar_Female_Size01_SummerCuteness_UI/Avatar_Female_Size01_SummerCuteness_UI.fbx"
@@ -18,12 +19,19 @@ const MIXAMO_ANIMS: Dictionary = {
 	"roll": "res://assets/animations/mixamo/dive_roll.fbx",
 }
 
+static var active_playable_bounds: Rect2 = Rect2(WORLD_MIN_X, WORLD_MIN_Z, WORLD_MAX_X - WORLD_MIN_X, WORLD_MAX_Z - WORLD_MIN_Z)
+
+
+static func set_playable_bounds(bounds: Rect2) -> void:
+	if bounds.size.x > 1.0 and bounds.size.y > 1.0:
+		active_playable_bounds = bounds
+
 
 static func clamp_playable(pos: Vector3) -> Vector3:
 	return Vector3(
-		clampf(pos.x, WORLD_MIN_X, WORLD_MAX_X),
+		clampf(pos.x, active_playable_bounds.position.x, active_playable_bounds.end.x),
 		pos.y,
-		clampf(pos.z, WORLD_MIN_Z, WORLD_MAX_Z)
+		clampf(pos.z, active_playable_bounds.position.y, active_playable_bounds.end.y)
 	)
 
 
@@ -50,7 +58,7 @@ static func get_character(_char_id: String) -> Dictionary:
 		"fire_interval": 0.14,
 		"pellets": 1,
 		"spread_deg": 2.5,
-		"spawn_pos": Vector3(-1.2, 0.0, 4.8),
+		"spawn_pos": Vector3(0.0, 0.0, -8.8),
 	}
 
 

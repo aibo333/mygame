@@ -3,13 +3,19 @@ extends CharacterBody3D
 
 signal action_changed(char_id: String, action_name: String)
 signal interaction_completed(char_id: String, station_label: String)
+signal shot_fired(muzzle_pos: Vector3, shot_dir: Vector3, damage: float)
+signal hp_changed(current_hp: float, max_hp: float)
+signal ammo_changed(ammo_in_mag: int, mag_size: int, is_reloading: bool)
+signal player_died()
 
 const TOON_SHADER := preload("res://assets/shaders/anime_toon.gdshader")
 const OUTLINE_SHADER := preload("res://assets/shaders/anime_outline.gdshader")
 
 const ROLL_DURATION: float = 1.05
+const ROLL_IFRAME_DURATION: float = 0.70
 const ROLL_COOLDOWN: float = 0.25
 const AVATAR_SCALE: float = 1.45
+const RELOAD_DURATION: float = 1.35
 
 var char_id: String = "reina_ar"
 var display_name: String = "白羽 玲奈"
@@ -23,6 +29,13 @@ var roll_speed: float = 9.8
 var fire_interval: float = 0.14
 var pellets: int = 1
 var spread_deg: float = 2.5
+var bullet_damage: float = 28.0
+var max_hp: float = 100.0
+var hp: float = 100.0
+var mag_size: int = 30
+var ammo_in_mag: int = 30
+var is_reloading: bool = false
+var is_dead: bool = false
 
 var is_active_player: bool = true
 var current_action: String = "idle"  # "idle", "walk", "shoot", "interact", "roll"
@@ -46,6 +59,8 @@ var _roll_timer: float = 0.0
 var _roll_cd: float = 0.0
 var _roll_dir: Vector3 = Vector3.FORWARD
 var _fire_cd: float = 0.0
+var _reload_timer: float = 0.0
+var _iframe_timer: float = 0.0
 var _muzzle_flash_timer: float = 0.0
 var _interact_spark_timer: float = 0.0
 var _interact_progress: float = 0.0
@@ -425,7 +440,7 @@ func trigger_preview_action(action_name: String) -> void:
 
 
 func start_roll(direction: Vector3) -> bool:
-	if _roll_timer > 0.0 or _roll_cd > 0.0:
+	if is_dead or _roll_timer > 0.0 or _roll_cd > 0.0:
 		return false
 	var dir := Vector3(direction.x, 0.0, direction.z)
 	if dir.length_squared() < 0.001:
@@ -433,11 +448,70 @@ func start_roll(direction: Vector3) -> bool:
 	_roll_dir = dir.normalized()
 	_facing_yaw = atan2(-_roll_dir.x, -_roll_dir.z)
 	_roll_timer = ROLL_DURATION
+	_iframe_timer = ROLL_IFRAME_DURATION
 	_roll_cd = ROLL_COOLDOWN
 	_has_click_move = false
 	_set_action("roll", true)
 	_spawn_dust_puff(global_position + Vector3(0.0, 0.14, 0.0))
 	return true
+
+
+func is_invulnerable() -> bool:
+	return _iframe_timer > 0.0
+
+
+func reset_combat_state() -> void:
+	is_dead = false
+	hp = max_hp
+	ammo_in_mag = mag_size
+	is_reloading = false
+	_reload_timer = 0.0
+	_iframe_timer = 0.0
+	_interact_progress = 0.0
+	hp_changed.emit(hp, max_hp)
+	ammo_changed.emit(ammo_in_mag, mag_size, is_reloading)
+
+
+func take_damage(amount: float) -> bool:
+	if is_dead or amount <= 0.0 or is_invulnerable():
+		return false
+	hp = maxf(0.0, hp - amount)
+	_iframe_timer = 0.22
+	_spawn_dust_puff(global_position + Vector3(0.0, 1.0, 0.0), Color(1.0, 0.26, 0.22, 0.85), 3)
+	hp_changed.emit(hp, max_hp)
+	if hp <= 0.0:
+		is_dead = true
+		velocity = Vector3.ZERO
+		_set_action("idle")
+		player_died.emit()
+	return true
+
+
+func heal(amount: float) -> void:
+	if is_dead or amount <= 0.0 or hp >= max_hp:
+		return
+	hp = minf(max_hp, hp + amount)
+	hp_changed.emit(hp, max_hp)
+
+
+func start_reload() -> bool:
+	if is_dead or is_reloading or ammo_in_mag >= mag_size:
+		return false
+	is_reloading = true
+	_reload_timer = RELOAD_DURATION
+	ammo_changed.emit(ammo_in_mag, mag_size, true)
+	return true
+
+
+func play_stratagem_step_fx() -> void:
+	_set_action("interact")
+	var hand_front: Vector3 = global_position + Vector3(-sin(_facing_yaw), 0.92, -cos(_facing_yaw)) * 0.58
+	_spawn_tinker_spark(hand_front)
+
+
+func play_stratagem_complete_fx() -> void:
+	_spawn_dust_puff(global_position + Vector3(-sin(_facing_yaw), 0.45, -cos(_facing_yaw)) * 0.6, accent_color, 5)
+	_set_action("idle")
 
 
 func update_character(
@@ -452,6 +526,19 @@ func update_character(
 	_nearest_station_label = nearest_station_label
 	_roll_cd = maxf(0.0, _roll_cd - delta)
 	_fire_cd = maxf(0.0, _fire_cd - delta)
+	_iframe_timer = maxf(0.0, _iframe_timer - delta)
+
+	if is_reloading:
+		_reload_timer -= delta
+		if _reload_timer <= 0.0:
+			is_reloading = false
+			ammo_in_mag = mag_size
+			ammo_changed.emit(ammo_in_mag, mag_size, false)
+
+	if is_dead:
+		velocity = Vector3.ZERO
+		_set_interact_bar_visible(false)
+		return
 
 	if _muzzle_flash_timer > 0.0:
 		_muzzle_flash_timer = maxf(0.0, _muzzle_flash_timer - delta)
@@ -586,8 +673,17 @@ func get_available_animations() -> PackedStringArray:
 
 
 func _try_fire_weapon(target_world_pos: Vector3) -> void:
-	if _fire_cd > 0.0:
+	if _fire_cd > 0.0 or is_reloading:
 		return
+	if showcase_override_action.is_empty():
+		if ammo_in_mag <= 0:
+			start_reload()
+			return
+		ammo_in_mag -= 1
+		ammo_changed.emit(ammo_in_mag, mag_size, false)
+		if ammo_in_mag <= 0:
+			start_reload()
+
 	_fire_cd = fire_interval
 	_muzzle_flash_timer = 0.07
 
@@ -602,8 +698,9 @@ func _try_fire_weapon(target_world_pos: Vector3) -> void:
 	for _i in range(pellets):
 		var spread_rad: float = deg_to_rad(randf_range(-spread_deg, spread_deg))
 		var shot_dir: Vector3 = base_dir.rotated(Vector3.UP, spread_rad)
-		var end_pos: Vector3 = muzzle_pos + shot_dir * randf_range(12.0, 17.0)
+		var end_pos: Vector3 = muzzle_pos + shot_dir * randf_range(14.0, 18.0)
 		_spawn_tracer(muzzle_pos, end_pos)
+		shot_fired.emit(muzzle_pos, shot_dir, bullet_damage)
 
 
 func _spawn_tracer(from_pos: Vector3, to_pos: Vector3) -> void:
