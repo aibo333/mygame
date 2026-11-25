@@ -1,1 +1,3 @@
 GitHub push test - 2026-11-25
+第二次推送測試：以 deceye 身分提交，不含 Claude 共同作者標記。
+Hello from mygame! 1 2 3
