@@ -78,6 +78,9 @@ var interact_bar_fill: MeshInstance3D = null
 var muzzle_light: OmniLight3D = null
 var muzzle_point: Marker3D = null
 var _weapon_mount_root: Node3D = null
+var _weapon_default_local_basis: Basis = Basis.IDENTITY
+var _last_aim_world_pos: Vector3 = Vector3.ZERO
+var _has_aim_target: bool = false
 var _weapon_models: Dictionary = {}
 var _weapon_audio_cache: Dictionary = {}
 
@@ -355,7 +358,8 @@ func _attach_tactical_rifle() -> void:
 	rifle.name = "TacticalRifleProp"
 	# Flip 180 deg around local X so barrel (+Z) points forward into LeftHand, stock tucks to shoulder, optic is UP, magazine is DOWN!
 	rifle.position = Vector3(0.03, 0.08, 0.03)
-	rifle.basis = Basis.from_euler(Vector3(deg_to_rad(82.0), deg_to_rad(-10.0), deg_to_rad(90.0))) * Basis(Vector3.RIGHT, PI)
+	_weapon_default_local_basis = Basis.from_euler(Vector3(deg_to_rad(82.0), deg_to_rad(-10.0), deg_to_rad(90.0))) * Basis(Vector3.RIGHT, PI)
+	rifle.basis = _weapon_default_local_basis
 	attach.add_child(rifle)
 	_weapon_mount_root = rifle
 
@@ -702,9 +706,17 @@ func reset_combat_state() -> void:
 		_reload_audio_player.stop()
 	if _weapon_mech_audio_player != null and _weapon_mech_audio_player.playing:
 		_weapon_mech_audio_player.stop()
+	for fp: AudioStreamPlayer in _fire_audio_pool:
+		if fp != null and fp.playing:
+			fp.stop()
+	for dp: AudioStreamPlayer in _distant_audio_pool:
+		if dp != null and dp.playing:
+			dp.stop()
 	play_draw_sfx()
 	_iframe_timer = 0.0
 	_hit_react_timer = 0.0
+	_roll_timer = 0.0
+	_roll_cd = 0.0
 	_interact_progress = 0.0
 	_set_action("idle", true)
 	hp_changed.emit(hp, max_hp)
@@ -731,6 +743,12 @@ func switch_weapon_slot(slot_index: int) -> bool:
 		_reload_audio_player.stop()
 	if _weapon_mech_audio_player != null and _weapon_mech_audio_player.playing:
 		_weapon_mech_audio_player.stop()
+	for fp: AudioStreamPlayer in _fire_audio_pool:
+		if fp != null and fp.playing:
+			fp.stop()
+	for dp: AudioStreamPlayer in _distant_audio_pool:
+		if dp != null and dp.playing:
+			dp.stop()
 
 	active_weapon_slot = slot_index
 	_fire_cd = 0.12
@@ -899,6 +917,11 @@ func play_stratagem_complete_fx() -> void:
 	_set_action("idle")
 
 
+func _process(_delta: float) -> void:
+	if _has_aim_target:
+		_align_weapon_to_aim(_last_aim_world_pos)
+
+
 func update_character(
 	delta: float,
 	move_input: Vector3,
@@ -908,6 +931,8 @@ func update_character(
 	want_roll: bool,
 	nearest_station_label: String
 ) -> void:
+	_last_aim_world_pos = aim_world_pos
+	_has_aim_target = true
 	_nearest_station_label = nearest_station_label
 	_roll_cd = maxf(0.0, _roll_cd - delta)
 	_fire_cd = maxf(0.0, _fire_cd - delta)
@@ -963,6 +988,7 @@ func update_character(
 	if is_dead:
 		velocity = Vector3.ZERO
 		_set_interact_bar_visible(false)
+		_restore_weapon_default_pose()
 		return
 
 	# Survival vitals tick: gradual hunger drain & stamina regen
@@ -1005,6 +1031,7 @@ func update_character(
 			move_and_slide()
 			global_position = SquadConfig.clamp_playable(Vector3(global_position.x, 0.0, global_position.z))
 			_apply_facing(delta, 18.0)
+			_restore_weapon_default_pose()
 			_set_interact_bar_visible(false)
 			return
 
@@ -1043,14 +1070,17 @@ func _update_active_player(
 	if want_roll:
 		var rdir := move_input if move_input.length_squared() > 0.04 else (aim_world_pos - global_position)
 		if start_roll(rdir):
+			_restore_weapon_default_pose()
 			return
+
+	# Always face the mouse cursor (aim_world_pos) whenever alive and not rolling
+	var to_aim := Vector3(aim_world_pos.x - global_position.x, 0.0, aim_world_pos.z - global_position.z)
+	if to_aim.length_squared() > 0.02:
+		_facing_yaw = atan2(-to_aim.x, -to_aim.z)
 
 	if want_shoot:
 		_set_interact_bar_visible(false)
 		_interact_progress = 0.0
-		var to_aim := Vector3(aim_world_pos.x - global_position.x, 0.0, aim_world_pos.z - global_position.z)
-		if to_aim.length_squared() > 0.02:
-			_facing_yaw = atan2(-to_aim.x, -to_aim.z)
 
 		var shoot_move_vec := Vector3.ZERO
 		if move_input.length_squared() > 0.02:
@@ -1083,8 +1113,9 @@ func _update_active_player(
 			else:
 				_set_action("shoot", false, "shoot")
 
-		_try_fire_weapon(aim_world_pos)
 		_apply_facing(delta, 20.0)
+		_align_weapon_to_aim(aim_world_pos)
+		_try_fire_weapon(aim_world_pos)
 		return
 
 	if want_interact:
@@ -1092,7 +1123,8 @@ func _update_active_player(
 		velocity = Vector3.ZERO
 		_set_action("interact")
 		_tick_interact_fx(delta)
-		_apply_facing(delta, 12.0)
+		_apply_facing(delta, 14.0)
+		_restore_weapon_default_pose()
 		return
 
 	_set_interact_bar_visible(false)
@@ -1114,11 +1146,10 @@ func _update_active_player(
 		velocity = move_vec * (move_speed * spd_mult)
 		move_and_slide()
 		global_position = SquadConfig.clamp_playable(Vector3(global_position.x, 0.0, global_position.z))
-		_facing_yaw = atan2(-move_vec.x, -move_vec.z)
 		if is_reloading:
-			_set_action("reload", false, "reload_move" if _has_clip("reload_move") else "walk")
+			_set_action("reload", false, "reload_move" if _has_clip("reload_move") else _pick_directional_move_clip(move_vec))
 		else:
-			_set_action("walk")
+			_set_action("walk", false, _pick_directional_move_clip(move_vec))
 		_step_dust_timer -= delta
 		if _step_dust_timer <= 0.0:
 			_step_dust_timer = 0.28
@@ -1130,7 +1161,49 @@ func _update_active_player(
 		else:
 			_set_action("idle")
 
-	_apply_facing(delta, 14.0)
+	_apply_facing(delta, 18.0)
+	_align_weapon_to_aim(aim_world_pos)
+
+
+func _compute_horizontal_aim_dir(aim_world_pos: Vector3) -> Vector3:
+	var to_aim := Vector3(aim_world_pos.x - global_position.x, 0.0, aim_world_pos.z - global_position.z)
+	if to_aim.length_squared() > 0.02:
+		return to_aim.normalized()
+	return Vector3(-sin(_facing_yaw), 0.0, -cos(_facing_yaw)).normalized()
+
+
+func _should_align_weapon_to_aim() -> bool:
+	return (
+		not is_dead
+		and _roll_timer <= 0.0
+		and not is_reloading
+		and current_action in ["idle", "walk", "shoot"]
+	)
+
+
+func _restore_weapon_default_pose() -> void:
+	if _weapon_mount_root != null:
+		_weapon_mount_root.basis = _weapon_default_local_basis
+	if muzzle_light != null and muzzle_point != null and muzzle_point.is_inside_tree():
+		muzzle_light.global_position = muzzle_point.global_position
+
+
+func _align_weapon_to_aim(aim_world_pos: Vector3) -> void:
+	if _weapon_mount_root == null or not _weapon_mount_root.is_inside_tree():
+		return
+	if not _should_align_weapon_to_aim():
+		_restore_weapon_default_pose()
+		return
+	var parent_node := _weapon_mount_root.get_parent() as Node3D
+	if parent_node == null:
+		return
+	var aim_dir: Vector3 = _compute_horizontal_aim_dir(aim_world_pos)
+	# Local +Z is the weapon barrel axis; Basis.looking_at(-aim_dir, UP) maps -Z -> -aim_dir, so +Z -> +aim_dir with +Y upright.
+	var desired_world_rot: Basis = Basis.looking_at(-aim_dir, Vector3.UP)
+	var parent_rot: Basis = parent_node.global_transform.basis.orthonormalized()
+	_weapon_mount_root.basis = (parent_rot.inverse() * desired_world_rot).orthonormalized()
+	if muzzle_light != null and muzzle_point != null and muzzle_point.is_inside_tree():
+		muzzle_light.global_position = muzzle_point.global_position
 
 
 func _apply_facing(delta: float, turn_speed: float) -> void:
@@ -1214,13 +1287,11 @@ func _try_fire_weapon(target_world_pos: Vector3) -> void:
 	_muzzle_flash_timer = 0.07
 	_play_fire_sfx()
 
-	var fwd := Vector3(-sin(_facing_yaw), 0.0, -cos(_facing_yaw))
-	var muzzle_pos: Vector3 = muzzle_point.global_position if (muzzle_point != null and muzzle_point.is_inside_tree()) else (global_position + Vector3(0.0, 1.32, 0.0) + fwd * 0.90)
-	var base_dir := Vector3(target_world_pos.x - muzzle_pos.x, 0.0, target_world_pos.z - muzzle_pos.z)
-	if base_dir.length_squared() < 0.05:
-		base_dir = fwd
-	else:
-		base_dir = base_dir.normalized()
+	_align_weapon_to_aim(target_world_pos)
+	var base_dir: Vector3 = _compute_horizontal_aim_dir(target_world_pos)
+	var muzzle_pos: Vector3 = muzzle_point.global_position if (muzzle_point != null and muzzle_point.is_inside_tree()) else (global_position + Vector3(0.0, 1.32, 0.0) + base_dir * 0.90)
+	if muzzle_light != null and muzzle_point != null and muzzle_point.is_inside_tree():
+		muzzle_light.global_position = muzzle_pos
 
 	for _i in range(pellets):
 		var spread_rad: float = deg_to_rad(randf_range(-spread_deg, spread_deg))
@@ -1304,13 +1375,33 @@ func _setup_loadout_audio() -> void:
 
 
 func _bind_cached_weapon_audio(weapon_id: String) -> void:
+	_fire_streams.clear()
+	_fire_distant_streams.clear()
+	_fire_unsilenced_streams.clear()
+	_fire_unsilenced_distant_streams.clear()
+	_silencer_screw_streams.clear()
+
+	_reload_clip_out_stream = null
+	_reload_clip_in_stream = null
+	_reload_clip_hit_stream = null
+	_reload_bolt_back_stream = null
+	_reload_bolt_forward_stream = null
+	_reload_bolt_back_unsilenced_stream = null
+	_reload_bolt_forward_unsilenced_stream = null
+	_reload_add_ammo_stream = null
+	_weapon_draw_stream = null
+	_silencer_on_stream = null
+	_silencer_off_stream = null
+	_silencer_screw_on_start_stream = null
+	_silencer_screw_off_end_stream = null
+
 	var bank: Dictionary = _weapon_audio_cache.get(weapon_id, {}) as Dictionary
 	if bank.is_empty():
 		return
-	_fire_streams = bank.get("fire", []) as Array[AudioStream]
-	_fire_distant_streams = bank.get("fire_distant", []) as Array[AudioStream]
-	_fire_unsilenced_streams = bank.get("fire_unsilenced", []) as Array[AudioStream]
-	_fire_unsilenced_distant_streams = bank.get("fire_unsilenced_distant", []) as Array[AudioStream]
+	_fire_streams.assign(bank.get("fire", []))
+	_fire_distant_streams.assign(bank.get("fire_distant", []))
+	_fire_unsilenced_streams.assign(bank.get("fire_unsilenced", []))
+	_fire_unsilenced_distant_streams.assign(bank.get("fire_unsilenced_distant", []))
 
 	_reload_clip_out_stream = bank.get("clip_out", null) as AudioStream
 	_reload_clip_in_stream = bank.get("clip_in", null) as AudioStream
@@ -1326,7 +1417,22 @@ func _bind_cached_weapon_audio(weapon_id: String) -> void:
 	_silencer_off_stream = bank.get("silencer_off", null) as AudioStream
 	_silencer_screw_on_start_stream = bank.get("silencer_screw_on_start", null) as AudioStream
 	_silencer_screw_off_end_stream = bank.get("silencer_screw_off_end", null) as AudioStream
-	_silencer_screw_streams = bank.get("silencer_screws", []) as Array[AudioStream]
+	_silencer_screw_streams.assign(bank.get("silencer_screws", []))
+
+
+func get_bound_fire_stream_paths() -> Dictionary:
+	var to_paths := func(arr: Array[AudioStream]) -> Array[String]:
+		var out: Array[String] = []
+		for s: AudioStream in arr:
+			if s != null:
+				out.append(s.resource_path)
+		return out
+	return {
+		"fire": to_paths.call(_fire_streams),
+		"fire_distant": to_paths.call(_fire_distant_streams),
+		"fire_unsilenced": to_paths.call(_fire_unsilenced_streams),
+		"fire_unsilenced_distant": to_paths.call(_fire_unsilenced_distant_streams),
+	}
 
 
 func _load_audio_stream(path: String) -> AudioStream:
@@ -1337,7 +1443,8 @@ func _load_audio_stream(path: String) -> AudioStream:
 
 func _play_fire_sfx() -> void:
 	var use_silenced: bool = supports_silencer and silencer_attached
-	var active_fire: Array[AudioStream] = _fire_streams if (use_silenced or _fire_unsilenced_streams.is_empty()) else _fire_unsilenced_streams
+	var use_unsilenced_alt: bool = supports_silencer and not silencer_attached and not _fire_unsilenced_streams.is_empty()
+	var active_fire: Array[AudioStream] = _fire_unsilenced_streams if use_unsilenced_alt else _fire_streams
 	if not active_fire.is_empty() and not _fire_audio_pool.is_empty():
 		var player: AudioStreamPlayer = _fire_audio_pool[_fire_audio_idx % _fire_audio_pool.size()]
 		_fire_audio_idx = (_fire_audio_idx + 1) % _fire_audio_pool.size()
@@ -1346,7 +1453,8 @@ func _play_fire_sfx() -> void:
 		player.pitch_scale = randf_range(0.96, 1.04)
 		player.play()
 
-	var active_distant: Array[AudioStream] = _fire_distant_streams if (use_silenced or _fire_unsilenced_distant_streams.is_empty()) else _fire_unsilenced_distant_streams
+	var use_unsilenced_distant_alt: bool = supports_silencer and not silencer_attached and not _fire_unsilenced_distant_streams.is_empty()
+	var active_distant: Array[AudioStream] = _fire_unsilenced_distant_streams if use_unsilenced_distant_alt else _fire_distant_streams
 	if not active_distant.is_empty() and not _distant_audio_pool.is_empty():
 		var dplayer: AudioStreamPlayer = _distant_audio_pool[_distant_audio_idx % _distant_audio_pool.size()]
 		_distant_audio_idx = (_distant_audio_idx + 1) % _distant_audio_pool.size()

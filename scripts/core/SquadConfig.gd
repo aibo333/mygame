@@ -39,10 +39,6 @@ const WEAPON_M4A1_SFX: Dictionary = {
 		"res://assets/packs/cs2_weapons_sound_pack/m4a1/m4a1_us_02.wav",
 		"res://assets/packs/cs2_weapons_sound_pack/m4a1/m4a1_us_03.wav",
 		"res://assets/packs/cs2_weapons_sound_pack/m4a1/m4a1_us_04.wav",
-		"res://assets/packs/cs2_weapons_sound_pack/m4a1/m4a1_01.wav",
-		"res://assets/packs/cs2_weapons_sound_pack/m4a1/m4a1_02.wav",
-		"res://assets/packs/cs2_weapons_sound_pack/m4a1/m4a1_03.wav",
-		"res://assets/packs/cs2_weapons_sound_pack/m4a1/m4a1_04.wav",
 	],
 	"fire_unsilenced_distant": [
 		"res://assets/packs/cs2_weapons_sound_pack/m4a1/m4a1_us_distant.wav",
@@ -77,7 +73,6 @@ const WEAPON_AK47_SFX: Dictionary = {
 		"res://assets/packs/cs2_weapons_sound_pack/ak47/ak47_02.wav",
 		"res://assets/packs/cs2_weapons_sound_pack/ak47/ak47_03.wav",
 		"res://assets/packs/cs2_weapons_sound_pack/ak47/ak47_04.wav",
-		"res://assets/packs/cs2_weapons_sound_pack/ak47/ak47-1.wav",
 	],
 	"fire_distant": [
 		"res://assets/packs/cs2_weapons_sound_pack/ak47/ak47_distant.wav",

@@ -565,6 +565,67 @@ func _test_main_scene_player_and_phase2() -> void:
 	_assert(world.switch_player_weapon(1) and player.get_active_weapon_id() == "ak47" and player.ammo_in_mag == 19, "3-Weapon Loadout: Switching back to Slot 2 preserves AK-47 ammo (19/30)")
 	_assert(world.switch_player_weapon(2) and player.get_active_weapon_id() == "deagle" and player.ammo_in_mag == 4, "3-Weapon Loadout: Switching back to Slot 3 preserves Desert Eagle ammo (4/7)")
 
+	# --- Audio Isolation, Cursor Facing & Weapon Barrel Alignment Verification ---
+	world.switch_player_weapon(1)
+	var ak_bound: Dictionary = player.get_bound_fire_stream_paths()
+	var ak_fire_paths: Array = ak_bound.get("fire", []) as Array
+	var ak_dist_paths: Array = ak_bound.get("fire_distant", []) as Array
+	var ak_unsil_paths: Array = ak_bound.get("fire_unsilenced", []) as Array
+	var ak_unsil_dist_paths: Array = ak_bound.get("fire_unsilenced_distant", []) as Array
+	var ak_audio_pure: bool = (
+		ak_fire_paths.size() == 4
+		and ak_dist_paths.size() == 1
+		and ak_unsil_paths.is_empty()
+		and ak_unsil_dist_paths.is_empty()
+	)
+	for p_item: Variant in ak_fire_paths:
+		var ps: String = str(p_item)
+		if not ps.contains("/ak47/ak47_0") or ps.contains("ak47-1") or ps.contains("m4a1") or ps.contains("deagle"):
+			ak_audio_pure = false
+	for p_item: Variant in ak_dist_paths:
+		if not str(p_item).contains("/ak47/ak47_distant"):
+			ak_audio_pure = false
+	_assert(ak_audio_pure, "Audio Isolation: AK-47 binds strictly CS2 AK-47 fire/distant streams with zero M4A1/Deagle/legacy leak")
+
+	# Moving without shooting still faces mouse cursor (aim_world_pos) instead of move_input
+	player.reset_combat_state()
+	var aim_base_pos: Vector3 = player.global_position
+	var cursor_target: Vector3 = aim_base_pos + Vector3(0.0, 0.0, -10.0)
+	var expected_yaw: float = atan2(-(cursor_target.x - aim_base_pos.x), -(cursor_target.z - aim_base_pos.z))
+	player.update_character(0.1, Vector3(1.0, 0.0, 0.0), cursor_target, false, false, false, "")
+	var yaw_err: float = absf(angle_difference(player.get_facing_yaw(), expected_yaw))
+	_assert(
+		yaw_err < 0.05 and player.current_action == "walk" and player.anim_player.current_animation == "strafe_right",
+		"Cursor Facing: Walking without shooting faces mouse cursor (yaw_err=%.4f) and plays directional strafe_right clip" % yaw_err
+	)
+
+	# Weapon barrel (+Z) and MuzzlePoint align with horizontal aim vector for all 3 weapons
+	var test_aim_dirs: Array[Vector3] = [
+		Vector3(1.0, 0.0, -0.6).normalized(),
+		Vector3(-0.8, 0.0, -0.5).normalized(),
+		Vector3(0.4, 0.0, 0.9).normalized(),
+	]
+	for slot_idx: int in range(3):
+		world.switch_player_weapon(slot_idx)
+		var wid_check: String = player.get_active_weapon_id()
+		var target_dir: Vector3 = test_aim_dirs[slot_idx]
+		var aim_pt: Vector3 = player.global_position + target_dir * 12.0
+		player.update_character(0.05, Vector3.ZERO, aim_pt, false, false, false, "")
+		var barrel_z: Vector3 = player._weapon_mount_root.global_transform.basis.z
+		var barrel_horiz: Vector3 = Vector3(barrel_z.x, 0.0, barrel_z.z).normalized()
+		var barrel_dot: float = barrel_horiz.dot(target_dir)
+		var grip_to_muzzle: Vector3 = player.muzzle_point.global_position - player._weapon_mount_root.global_position
+		var muzzle_ahead_dist: float = Vector3(grip_to_muzzle.x, 0.0, grip_to_muzzle.z).dot(target_dir)
+		var light_synced: bool = player.muzzle_light.global_position.distance_to(player.muzzle_point.global_position) < 0.01
+		_assert(
+			barrel_dot > 0.99 and muzzle_ahead_dist > 0.20 and light_synced,
+			"Weapon Alignment (%s): barrel +Z dot=%.4f (>0.99), muzzle ahead=%.2fm, muzzle light synced" % [wid_check, barrel_dot, muzzle_ahead_dist]
+		)
+
+	# Restore Slot 3 (deagle, 4 ammo) so subsequent avatar switch assertions remain unchanged
+	world.switch_player_weapon(2)
+	player.ammo_in_mag = 4
+
 	# --- Live Character Model Switching Verification ---
 	for acfg: Dictionary in SquadConfig.get_avatar_catalog():
 		var aid: String = str(acfg.get("id", ""))
