@@ -220,6 +220,7 @@ func _setup_squad_and_camera() -> void:
 		girl.hp_changed.connect(_on_player_hp_changed)
 		girl.vitals_changed.connect(_on_player_vitals_changed)
 		girl.ammo_changed.connect(_on_player_ammo_changed)
+		girl.weapon_switched.connect(_on_player_weapon_switched)
 		girl.player_died.connect(_on_player_died)
 		squad.append(girl)
 
@@ -248,6 +249,7 @@ func _setup_hud_and_overlays() -> void:
 	hud.hub_requested.connect(_on_toggle_hub_overlay)
 	hud.build_menu_requested.connect(_on_toggle_build_mode)
 	hud.quickbelt_slot_requested.connect(func(idx: int): use_quickbelt_slot(idx))
+	hud.weapon_slot_requested.connect(func(idx: int): switch_player_weapon(idx))
 	hud.cheat_panel_requested.connect(_on_toggle_dev_cheat_ui)
 	hud.set_active_character(active_index)
 	hud.set_camera_locked(camera_rig.camera_locked)
@@ -310,6 +312,7 @@ func _setup_hud_and_overlays() -> void:
 	dev_cheat_ui.clear_zombies_requested.connect(_on_cheat_clear_zombies)
 	dev_cheat_ui.grant_resources_requested.connect(_on_cheat_grant_resources)
 	dev_cheat_ui.spawn_demo_fortifications_requested.connect(_on_cheat_spawn_demo_fortifications)
+	dev_cheat_ui.avatar_selected.connect(_on_cheat_switch_avatar)
 
 
 func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: int = -1) -> Dictionary:
@@ -386,7 +389,7 @@ func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: in
 	_refresh_minimap()
 	if hud != null:
 		hud.set_sector_info(current_seed, "%s ｜ %s" % [str(tier_cfg.get("name", "Tier 1")), sector_generator.get_block_summary_text()])
-		hud.push_status("🚂 已進站 %s — 右鍵點擊物件開啟選單 ｜ 按 B 建造防禦工事 ｜ 1-5 使用腰帶道具" % str(tier_cfg.get("name", "Tier 1")))
+		hud.push_status("🚂 已進站 %s — 1-3 切換武器 ｜ 4-8 快速腰帶 ｜ 右鍵互動 ｜ 按 B 建造防禦工事" % str(tier_cfg.get("name", "Tier 1")))
 	return sector_data
 
 
@@ -397,7 +400,7 @@ func use_quickbelt_slot(slot_index: int) -> Dictionary:
 	var cnt: int = int(slot.get("count", 0))
 	if cnt <= 0 and not cheat_infinite_resources:
 		if hud != null:
-			hud.push_status("⚠️ 快速腰帶 [%d] %s 已用完！" % [slot_index + 1, str(slot.get("name", ""))])
+			hud.push_status("⚠️ 快速腰帶 [%d] %s 已用完！" % [slot_index + 4, str(slot.get("name", ""))])
 		return {"ok": false, "reason": "empty"}
 
 	var active: SquadCharacter = get_active_character()
@@ -504,6 +507,28 @@ func _on_toggle_dev_cheat_ui() -> void:
 	if dev_cheat_ui != null:
 		dev_cheat_ui.toggle_open()
 		dev_cheat_ui.sync_states(cheat_god_mode, cheat_infinite_resources, cheat_pause_spawns)
+		var active: SquadCharacter = get_active_character()
+		if active != null:
+			dev_cheat_ui.sync_active_avatar(active.get_active_avatar_id())
+
+
+func switch_player_avatar(avatar_id: String) -> bool:
+	var active: SquadCharacter = get_active_character()
+	if active == null:
+		return false
+	var ok: bool = active.switch_avatar_model(avatar_id)
+	if ok:
+		if dev_cheat_ui != null:
+			dev_cheat_ui.sync_active_avatar(active.get_active_avatar_id())
+		var acfg: Dictionary = SquadConfig.get_avatar_config(avatar_id)
+		var alabel: String = str(acfg.get("label", avatar_id))
+		if hud != null:
+			hud.push_status("🎭 [DEV] 已即時切換角色模型：%s" % alabel)
+	return ok
+
+
+func _on_cheat_switch_avatar(avatar_id: String) -> void:
+	switch_player_avatar(avatar_id)
 
 
 func _on_cheat_clear_zombies() -> void:
@@ -868,6 +893,7 @@ func _sync_hud_state() -> void:
 	if active != null:
 		hud.update_player_vitals(active.hp, active.max_hp, active.ammo_in_mag, active.mag_size, active.is_reloading)
 		hud.update_survival_vitals(active.hp, active.max_hp, active.stamina, active.max_stamina, active.hunger, active.max_hunger)
+		hud.update_weapon_info(active.active_weapon_slot, active.active_weapon_id, active.weapon_label, active.supports_silencer, active.silencer_attached, active.get_weapon_loadout_summary())
 	hud.update_quickbelt(quickbelt_slots, cheat_infinite_resources)
 	hud.update_cheat_status(cheat_god_mode, cheat_infinite_resources, cheat_pause_spawns)
 	if dev_cheat_ui != null:
@@ -996,6 +1022,19 @@ func _on_player_vitals_changed(hp: float, max_hp: float, sta: float, max_sta: fl
 
 func _on_player_ammo_changed(_ammo: int, _mag: int, _rel: bool) -> void:
 	_sync_hud_state()
+
+
+func _on_player_weapon_switched(slot_index: int, _weapon_id: String, weapon_label: String, _ammo: int, _mag: int) -> void:
+	_sync_hud_state()
+	if hud != null:
+		hud.push_status("🔫 切換武器：[%d] %s" % [slot_index + 1, weapon_label])
+
+
+func switch_player_weapon(slot_index: int) -> bool:
+	var active: SquadCharacter = get_active_character()
+	if active == null or active.is_dead:
+		return false
+	return active.switch_weapon_slot(slot_index)
 
 
 func _on_zombie_attacked_player(damage: float) -> void:
@@ -1357,24 +1396,38 @@ func _input(event: InputEvent) -> void:
 				_try_begin_stratagem_interaction()
 				get_viewport().set_input_as_handled()
 			KEY_1:
-				use_quickbelt_slot(0)
+				switch_player_weapon(0)
 				get_viewport().set_input_as_handled()
 			KEY_2:
-				use_quickbelt_slot(1)
+				switch_player_weapon(1)
 				get_viewport().set_input_as_handled()
 			KEY_3:
-				use_quickbelt_slot(2)
+				switch_player_weapon(2)
 				get_viewport().set_input_as_handled()
 			KEY_4:
-				use_quickbelt_slot(3)
+				use_quickbelt_slot(0)
 				get_viewport().set_input_as_handled()
 			KEY_5:
+				use_quickbelt_slot(1)
+				get_viewport().set_input_as_handled()
+			KEY_6:
+				use_quickbelt_slot(2)
+				get_viewport().set_input_as_handled()
+			KEY_7:
+				use_quickbelt_slot(3)
+				get_viewport().set_input_as_handled()
+			KEY_8:
 				use_quickbelt_slot(4)
 				get_viewport().set_input_as_handled()
 			KEY_R:
 				var active: SquadCharacter = get_active_character()
 				if active != null and active.start_reload() and hud != null:
 					hud.push_status("🔫 正在更換彈匣...")
+				get_viewport().set_input_as_handled()
+			KEY_V:
+				var active_s: SquadCharacter = get_active_character()
+				if active_s != null and active_s.toggle_silencer() and hud != null:
+					hud.push_status("🔇 正在安裝消音器..." if not active_s.silencer_attached else "🔊 正在拆下消音器...")
 				get_viewport().set_input_as_handled()
 			KEY_F5:
 				_on_regenerate_sector_requested()

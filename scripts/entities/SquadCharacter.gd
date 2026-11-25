@@ -7,16 +7,26 @@ signal shot_fired(muzzle_pos: Vector3, shot_dir: Vector3, damage: float)
 signal hp_changed(current_hp: float, max_hp: float)
 signal vitals_changed(hp: float, max_hp: float, stamina: float, max_stamina: float, hunger: float, max_hunger: float)
 signal ammo_changed(ammo_in_mag: int, mag_size: int, is_reloading: bool)
+signal weapon_switched(slot_index: int, weapon_id: String, weapon_label: String, ammo_in_mag: int, mag_size: int)
+signal avatar_switched(avatar_id: String, avatar_label: String)
 signal player_died()
 
 const TOON_SHADER := preload("res://assets/shaders/anime_toon.gdshader")
 const OUTLINE_SHADER := preload("res://assets/shaders/anime_outline.gdshader")
 
-const ROLL_DURATION: float = 1.05
-const ROLL_IFRAME_DURATION: float = 0.70
-const ROLL_COOLDOWN: float = 0.25
+const ROLL_DURATION: float = 0.62
+const ROLL_IFRAME_DURATION: float = 0.48
+const ROLL_COOLDOWN: float = 0.20
+const ROLL_CANCEL_PROGRESS: float = 0.72
 const AVATAR_SCALE: float = 1.45
 const RELOAD_DURATION: float = 1.35
+const SHOOT_MOVE_SPEED_MULT: float = 0.80
+const FIRE_AUDIO_POOL_SIZE: int = 6
+const FIRE_AUDIO_VOLUME_DB: float = -6.0
+const FIRE_DISTANT_VOLUME_DB: float = -18.0
+const RELOAD_AUDIO_VOLUME_DB: float = -4.0
+const SILENCER_TOGGLE_DURATION: float = 1.40
+const HIT_REACT_DURATION: float = 0.28
 
 var char_id: String = "reina_ar"
 var display_name: String = "白羽 玲奈"
@@ -39,6 +49,14 @@ var max_hunger: float = 100.0
 var hunger: float = 100.0
 var mag_size: int = 30
 var ammo_in_mag: int = 30
+var reload_duration: float = RELOAD_DURATION
+var supports_silencer: bool = true
+var weapon_loadout: Array[Dictionary] = []
+var active_weapon_slot: int = 0
+var active_weapon_id: String = "m4a1s"
+var active_weapon_short_name: String = "M4A1-S"
+var active_avatar_id: String = SquadConfig.DEFAULT_AVATAR_ID
+var _active_avatar_cfg: Dictionary = {}
 var is_reloading: bool = false
 var is_dead: bool = false
 var god_mode: bool = false
@@ -58,6 +76,10 @@ var selection_ring: MeshInstance3D = null
 var interact_bar_root: Node3D = null
 var interact_bar_fill: MeshInstance3D = null
 var muzzle_light: OmniLight3D = null
+var muzzle_point: Marker3D = null
+var _weapon_mount_root: Node3D = null
+var _weapon_models: Dictionary = {}
+var _weapon_audio_cache: Dictionary = {}
 
 var _loaded_clips: Array[String] = []
 var _camera_yaw_rad: float = 0.0
@@ -69,6 +91,7 @@ var _roll_dir: Vector3 = Vector3.FORWARD
 var _fire_cd: float = 0.0
 var _reload_timer: float = 0.0
 var _iframe_timer: float = 0.0
+var _hit_react_timer: float = 0.0
 var _muzzle_flash_timer: float = 0.0
 var _interact_spark_timer: float = 0.0
 var _interact_progress: float = 0.0
@@ -77,6 +100,36 @@ var _has_click_move: bool = false
 var _follow_leader: Node3D = null
 var _follow_offset: Vector3 = Vector3.ZERO
 var _nearest_station_label: String = ""
+var _fire_audio_pool: Array[AudioStreamPlayer] = []
+var _fire_audio_idx: int = 0
+var _distant_audio_pool: Array[AudioStreamPlayer] = []
+var _distant_audio_idx: int = 0
+var _reload_audio_player: AudioStreamPlayer = null
+var _weapon_mech_audio_player: AudioStreamPlayer = null
+var _fire_streams: Array[AudioStream] = []
+var _fire_distant_streams: Array[AudioStream] = []
+var _fire_unsilenced_streams: Array[AudioStream] = []
+var _fire_unsilenced_distant_streams: Array[AudioStream] = []
+var _reload_clip_out_stream: AudioStream = null
+var _reload_clip_in_stream: AudioStream = null
+var _reload_clip_hit_stream: AudioStream = null
+var _reload_bolt_back_stream: AudioStream = null
+var _reload_bolt_forward_stream: AudioStream = null
+var _reload_bolt_back_unsilenced_stream: AudioStream = null
+var _reload_bolt_forward_unsilenced_stream: AudioStream = null
+var _reload_add_ammo_stream: AudioStream = null
+var _weapon_draw_stream: AudioStream = null
+var _silencer_on_stream: AudioStream = null
+var _silencer_off_stream: AudioStream = null
+var _silencer_screw_on_start_stream: AudioStream = null
+var _silencer_screw_off_end_stream: AudioStream = null
+var _silencer_screw_streams: Array[AudioStream] = []
+var _reload_sfx_stage: int = 0
+var silencer_attached: bool = true
+var is_toggling_silencer: bool = false
+var _silencer_toggle_timer: float = 0.0
+var _silencer_target_state: bool = true
+var _silencer_sfx_stage: int = 0
 
 
 func setup(cfg: Dictionary, p_vfx_parent: Node3D) -> void:
@@ -101,9 +154,35 @@ func setup(cfg: Dictionary, p_vfx_parent: Node3D) -> void:
 	_build_collision()
 	_build_selection_ring()
 	_build_interact_bar()
-	_load_hiragara_avatar()
-	_setup_mixamo_animations()
+	_init_weapon_loadout()
+	_init_model_pivot()
+	switch_avatar_model(SquadConfig.DEFAULT_AVATAR_ID)
+	_setup_loadout_audio()
+	_apply_active_weapon_state(false)
 	_play_clip("idle")
+
+
+func _init_weapon_loadout() -> void:
+	weapon_loadout.clear()
+	for raw_w: Dictionary in SquadConfig.get_default_loadout():
+		var entry: Dictionary = raw_w.duplicate(true)
+		entry["ammo_in_mag"] = int(entry.get("mag_size", 30))
+		weapon_loadout.append(entry)
+	active_weapon_slot = 0
+	if not weapon_loadout.is_empty():
+		var w0: Dictionary = weapon_loadout[0]
+		active_weapon_id = str(w0.get("id", "m4a1s"))
+		active_weapon_short_name = str(w0.get("short_name", "M4A1-S"))
+		weapon_label = str(w0.get("label", weapon_label))
+		mag_size = int(w0.get("mag_size", 30))
+		ammo_in_mag = mag_size
+		fire_interval = float(w0.get("fire_interval", fire_interval))
+		bullet_damage = float(w0.get("bullet_damage", bullet_damage))
+		pellets = int(w0.get("pellets", pellets))
+		spread_deg = float(w0.get("spread_deg", spread_deg))
+		reload_duration = float(w0.get("reload_duration", RELOAD_DURATION))
+		supports_silencer = bool(w0.get("supports_silencer", true))
+		muzzle_color = w0.get("muzzle_color", muzzle_color)
 
 
 func _build_collision() -> void:
@@ -172,29 +251,14 @@ func _build_interact_bar() -> void:
 	interact_bar_root.add_child(interact_bar_fill)
 
 
-func _load_hiragara_avatar() -> void:
+func _init_model_pivot() -> void:
+	if model_pivot != null:
+		return
 	model_pivot = Node3D.new()
 	model_pivot.name = "ModelPivot"
 	_facing_yaw = PI  # Initially face toward +Z (toward camera)
 	model_pivot.rotation.y = _facing_yaw
 	add_child(model_pivot)
-
-	var loaded := load(SquadConfig.AVATAR_FBX_PATH)
-	if loaded is PackedScene:
-		avatar_root = (loaded as PackedScene).instantiate() as Node3D
-		avatar_root.name = "SummerCutenessAvatar"
-		# Retargeted Humanoid faces +Z; rotate PI so local -Z matches Godot forward!
-		avatar_root.rotation.y = PI
-		avatar_root.scale = Vector3.ONE * AVATAR_SCALE
-		model_pivot.add_child(avatar_root)
-
-		skeleton = avatar_root.find_child("GeneralSkeleton", true, false) as Skeleton3D
-		if skeleton == null:
-			skeleton = _find_skeleton(avatar_root)
-		_apply_avatar_materials(avatar_root)
-		_attach_tactical_rifle()
-	else:
-		push_warning("SquadCharacter: Failed to load avatar FBX at %s" % SquadConfig.AVATAR_FBX_PATH)
 
 	# Dynamic muzzle flash light
 	muzzle_light = OmniLight3D.new()
@@ -204,6 +268,68 @@ func _load_hiragara_avatar() -> void:
 	muzzle_light.omni_range = 5.5
 	muzzle_light.position = Vector3(0.24, 1.35, -0.95)
 	model_pivot.add_child(muzzle_light)
+
+
+func get_active_avatar_id() -> String:
+	return active_avatar_id
+
+
+func switch_avatar_model(avatar_id: String) -> bool:
+	var cfg: Dictionary = SquadConfig.get_avatar_config(avatar_id)
+	if cfg.is_empty():
+		push_warning("SquadCharacter: Unknown avatar_id '%s'" % avatar_id)
+		return false
+	var model_path: String = str(cfg.get("model_path", ""))
+	if model_path.is_empty() or not ResourceLoader.exists(model_path):
+		push_warning("SquadCharacter: Missing avatar model at %s" % model_path)
+		return false
+	var loaded := load(model_path) as PackedScene
+	if loaded == null:
+		push_warning("SquadCharacter: Failed to load avatar PackedScene at %s" % model_path)
+		return false
+
+	if model_pivot == null:
+		_init_model_pivot()
+
+	# Preserve current weapon slot ammo before rebuilding weapon mounts
+	if active_weapon_slot >= 0 and active_weapon_slot < weapon_loadout.size():
+		weapon_loadout[active_weapon_slot]["ammo_in_mag"] = ammo_in_mag
+
+	# Cleanly remove and free previous avatar root (and its old skeleton, weapon mounts, and AnimationPlayer)
+	if avatar_root != null and is_instance_valid(avatar_root):
+		if avatar_root.get_parent() != null:
+			avatar_root.get_parent().remove_child(avatar_root)
+		avatar_root.queue_free()
+	avatar_root = null
+	skeleton = null
+	anim_player = null
+	_weapon_mount_root = null
+	muzzle_point = null
+	_weapon_models.clear()
+	_loaded_clips.clear()
+
+	_active_avatar_cfg = cfg.duplicate(true)
+	active_avatar_id = str(cfg.get("id", avatar_id))
+
+	avatar_root = loaded.instantiate() as Node3D
+	avatar_root.name = "Avatar_" + active_avatar_id
+	avatar_root.rotation.y = float(cfg.get("facing_yaw_offset", PI))
+	avatar_root.scale = Vector3.ONE * float(cfg.get("scale", AVATAR_SCALE))
+	model_pivot.add_child(avatar_root)
+
+	skeleton = avatar_root.find_child("GeneralSkeleton", true, false) as Skeleton3D
+	if skeleton == null:
+		skeleton = _find_skeleton(avatar_root)
+
+	_apply_avatar_materials(avatar_root, _active_avatar_cfg)
+	_attach_tactical_rifle()
+	_setup_mixamo_animations()
+	_apply_active_weapon_state(false)
+
+	current_action = "idle"
+	_play_clip("idle", true)
+	avatar_switched.emit(active_avatar_id, str(cfg.get("label", active_avatar_id)))
+	return true
 
 
 func _find_skeleton(node: Node) -> Skeleton3D:
@@ -217,7 +343,7 @@ func _find_skeleton(node: Node) -> Skeleton3D:
 
 
 func _attach_tactical_rifle() -> void:
-	# Mount a sleek dark tactical rifle to her retargeted RightHand bone so Rifle Idle / Run / Fire look grounded!
+	# Mount all 3 loadout weapon models to her retargeted RightHand bone and swap visibility per active slot.
 	if skeleton == null or skeleton.find_bone("RightHand") < 0:
 		return
 	var attach := BoneAttachment3D.new()
@@ -231,7 +357,84 @@ func _attach_tactical_rifle() -> void:
 	rifle.position = Vector3(0.03, 0.08, 0.03)
 	rifle.basis = Basis.from_euler(Vector3(deg_to_rad(82.0), deg_to_rad(-10.0), deg_to_rad(90.0))) * Basis(Vector3.RIGHT, PI)
 	attach.add_child(rifle)
+	_weapon_mount_root = rifle
 
+	muzzle_point = Marker3D.new()
+	muzzle_point.name = "MuzzlePoint"
+	muzzle_point.position = Vector3(0.0, 0.055, 0.62)
+	rifle.add_child(muzzle_point)
+
+	_weapon_models.clear()
+	var mounted_any: bool = false
+	for wcfg: Dictionary in weapon_loadout:
+		var wid: String = str(wcfg.get("id", ""))
+		var mpath: String = str(wcfg.get("model_path", ""))
+		if wid.is_empty() or mpath.is_empty() or not ResourceLoader.exists(mpath):
+			push_warning("SquadCharacter: Missing weapon model for '%s' at %s" % [wid, mpath])
+			continue
+		var packed := load(mpath) as PackedScene
+		if packed == null:
+			continue
+		var gun_model := packed.instantiate() as Node3D
+		gun_model.name = str(wcfg.get("model_node_name", wid + "Model"))
+		gun_model.scale = wcfg.get("model_scale", Vector3.ONE * 0.72) as Vector3
+		gun_model.position = wcfg.get("model_pos", Vector3.ZERO) as Vector3
+		if bool(wcfg.get("apply_m4a1s_pbr", false)):
+			_apply_m4a1s_pbr_material(gun_model)
+		gun_model.visible = (wid == active_weapon_id)
+		rifle.add_child(gun_model)
+		_weapon_models[wid] = gun_model
+		mounted_any = true
+
+	if not mounted_any:
+		push_warning("SquadCharacter: Falling back to procedural rifle; no weapon models loaded")
+		_build_fallback_box_rifle(rifle)
+
+
+func _apply_m4a1s_pbr_material(root_node: Node) -> void:
+	var dir := SquadConfig.WEAPON_M4A1S_DIR
+	var mat := StandardMaterial3D.new()
+	mat.resource_name = "M4A1S_PBR"
+
+	var albedo_path := dir + "m4a1_silencer_default_color_psd_ee3b9cfe.png"
+	if ResourceLoader.exists(albedo_path):
+		mat.albedo_texture = load(albedo_path) as Texture2D
+
+	var normal_path := dir + "m4a1_silencer_default_normal_tga_2fc36c61.png"
+	if ResourceLoader.exists(normal_path):
+		mat.normal_enabled = true
+		mat.normal_texture = load(normal_path) as Texture2D
+
+	var orm_path := dir + "m4a1_silencer_default_ao_tga_9a4bb8ca_orm.png"
+	if ResourceLoader.exists(orm_path):
+		var orm_tex := load(orm_path) as Texture2D
+		mat.ao_enabled = true
+		mat.ao_texture = orm_tex
+		mat.ao_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_RED
+		mat.roughness = 1.0
+		mat.roughness_texture = orm_tex
+		mat.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+		mat.metallic = 1.0
+		mat.metallic_texture = orm_tex
+		mat.metallic_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_BLUE
+	else:
+		mat.metallic = 0.65
+		mat.roughness = 0.42
+
+	_set_material_recursive(root_node, mat)
+
+
+func _set_material_recursive(node: Node, mat: Material) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		if mi.mesh != null:
+			for s in range(mi.mesh.get_surface_count()):
+				mi.set_surface_override_material(s, mat)
+	for c in node.get_children():
+		_set_material_recursive(c, mat)
+
+
+func _build_fallback_box_rifle(rifle: Node3D) -> void:
 	var body_mat := StandardMaterial3D.new()
 	body_mat.albedo_color = Color(0.18, 0.21, 0.27)
 	body_mat.metallic = 0.55
@@ -275,7 +478,8 @@ func _setup_mixamo_animations() -> void:
 	var lib := AnimationLibrary.new()
 	var skel_rel_path: String = str(avatar_root.get_path_to(skeleton))
 
-	for action_name: String in ["idle", "walk", "shoot", "roll"]:
+	var one_shot_clips: Array[String] = ["roll", "hit", "death", "reload"]
+	for action_name: String in SquadConfig.MIXAMO_ANIMS.keys():
 		var fbx_path: String = str(SquadConfig.MIXAMO_ANIMS.get(action_name, ""))
 		if fbx_path.is_empty() or not ResourceLoader.exists(fbx_path):
 			continue
@@ -287,7 +491,7 @@ func _setup_mixamo_animations() -> void:
 		if src_ap != null and src_ap.get_animation_list().size() > 0:
 			var raw_anim: Animation = src_ap.get_animation(src_ap.get_animation_list()[0])
 			var clip: Animation = raw_anim.duplicate(true) as Animation
-			clip.loop_mode = Animation.LOOP_NONE if action_name == "roll" else Animation.LOOP_LINEAR
+			clip.loop_mode = Animation.LOOP_NONE if action_name in one_shot_clips else Animation.LOOP_LINEAR
 			_retarget_track_paths_and_strip_root_motion(clip, skel_rel_path)
 			lib.add_animation(action_name, clip)
 			_loaded_clips.append(action_name)
@@ -304,6 +508,8 @@ func _setup_mixamo_animations() -> void:
 
 
 func _retarget_track_paths_and_strip_root_motion(anim: Animation, skel_rel_path: String) -> void:
+	var foot_pitch_deg: float = float(_active_avatar_cfg.get("foot_pitch_fix_deg", -52.0))
+	var hips_y_offset: float = float(_active_avatar_cfg.get("hips_y_offset", -0.98))
 	for ti in range(anim.get_track_count()):
 		var raw_path: String = str(anim.track_get_path(ti))
 		var colon_idx: int = raw_path.find(":")
@@ -312,38 +518,34 @@ func _retarget_track_paths_and_strip_root_motion(anim: Animation, skel_rel_path:
 		var sub_bone: String = raw_path.substr(colon_idx + 1)
 		anim.track_set_path(ti, NodePath(skel_rel_path + ":" + sub_bone))
 
-		# Compensate SummerCuteness's sloped ankle-to-toe bind angle (-52 deg pitch around local X)
+		# Compensate sloped ankle-to-toe bind angle around local X
 		# so both shoes plant flat on the ground without bending the calves upward!
-		if (sub_bone == "LeftFoot" or sub_bone == "RightFoot") and anim.track_get_type(ti) == Animation.TYPE_ROTATION_3D:
-			var foot_fix := Quaternion(Vector3.RIGHT, deg_to_rad(-52.0))
+		if absf(foot_pitch_deg) > 0.01 and (sub_bone == "LeftFoot" or sub_bone == "RightFoot") and anim.track_get_type(ti) == Animation.TYPE_ROTATION_3D:
+			var foot_fix := Quaternion(Vector3.RIGHT, deg_to_rad(foot_pitch_deg))
 			var kcount_r: int = anim.track_get_key_count(ti)
 			for ki in range(kcount_r):
 				var q: Quaternion = anim.track_get_key_value(ti, ki)
 				anim.track_set_key_value(ti, ki, (q * foot_fix).normalized())
 
 		# Strip horizontal X/Z root-motion drift AND rebase vertical Y to Hips local rest (0.0)
-		# because SummerCuteness's Bip001 parent bone already sits at standing pelvis height (0.78m)!
+		# because Bip001 parent bone already sits at standing pelvis height (0.78m)!
 		if sub_bone == "Hips" and anim.track_get_type(ti) == Animation.TYPE_POSITION_3D:
 			var kcount: int = anim.track_get_key_count(ti)
 			if kcount > 0:
 				for ki in range(kcount):
 					var p: Vector3 = anim.track_get_key_value(ti, ki)
-					anim.track_set_key_value(ti, ki, Vector3(0.0, p.y - 0.98, 0.0))
+					anim.track_set_key_value(ti, ki, Vector3(0.0, p.y + hips_y_offset, 0.0))
 
 
-func _apply_avatar_materials(root_node: Node) -> void:
-	var tex_dir: String = SquadConfig.AVATAR_DIR
-	var tex_map := {
-		"MAT_Summer_Cuteness_Body_1_UI": tex_dir + "Summer_Cuteness_Body_1_D.png",
-		"MAT_Summer_Cuteness_Body_2_UI": tex_dir + "Summer_Cuteness_Body_2_D.png",
-		"MAT_Summer_Body_2_UI": tex_dir + "Summer_Body_Map2_D.png",
-		"MAT_Summer_Hair_T_UI": tex_dir + "Summer_Body_Map2_D.png",
-		"MAT_Summer_Face_UI": tex_dir + "Summer_Face_D.png",
-		"MAT_Summer_Eye_UI": tex_dir + "Summer_Face_D.png",
-		"MAT_Summer_Eyebrows_UI": tex_dir + "Summer_Face_D.png",
-		"MAT_Summer_Weapon_1_UI": tex_dir + "Summer_Weapon_D.png",
-	}
+func _apply_avatar_materials(root_node: Node, avatar_cfg: Dictionary) -> void:
+	var tex_dir: String = str(avatar_cfg.get("texture_dir", SquadConfig.AVATAR_DIR))
+	var raw_tex_map: Dictionary = avatar_cfg.get("tex_map", {}) as Dictionary
+	var tex_map: Dictionary = {}
+	for mkey: String in raw_tex_map.keys():
+		var fname: String = str(raw_tex_map[mkey])
+		tex_map[mkey] = fname if fname.begins_with("res://") else (tex_dir + fname)
 
+	var hide_substrings: Array = avatar_cfg.get("hide_mesh_substrings", ["hairshadow", "shy"]) as Array
 	var outfit_tint := Color(0.84, 0.84, 0.86)
 	var face_tint := Color(0.88, 0.88, 0.90)
 
@@ -352,16 +554,18 @@ func _apply_avatar_materials(root_node: Node) -> void:
 	outline_mat.set_shader_parameter("outline_color", Color(0.18, 0.14, 0.22, 1.0))
 	outline_mat.set_shader_parameter("outline_width", 0.0038)
 
-	_apply_materials_recursive(root_node, tex_map, outfit_tint, face_tint, outline_mat)
+	_apply_materials_recursive(root_node, tex_map, hide_substrings, outfit_tint, face_tint, outline_mat)
 
 
-func _apply_materials_recursive(node: Node, tex_map: Dictionary, outfit_tint: Color, face_tint: Color, outline_mat: ShaderMaterial) -> void:
+func _apply_materials_recursive(node: Node, tex_map: Dictionary, hide_substrings: Array, outfit_tint: Color, face_tint: Color, outline_mat: ShaderMaterial) -> void:
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
 		var nlow := mi.name.to_lower()
-		if nlow.contains("hairshadow") or nlow.contains("shy"):
-			mi.visible = false
-			return
+		for hsub: Variant in hide_substrings:
+			var hs: String = str(hsub).to_lower()
+			if not hs.is_empty() and nlow.contains(hs):
+				mi.visible = false
+				return
 		if mi.mesh != null:
 			for s in range(mi.mesh.get_surface_count()):
 				var orig := mi.get_active_material(s)
@@ -372,7 +576,7 @@ func _apply_materials_recursive(node: Node, tex_map: Dictionary, outfit_tint: Co
 				var tex := load(tpath) as Texture2D
 				var is_face := mname.contains("Face") or mname.contains("Eye")
 				var is_hair_t := mname.contains("Hair_T")
-				var is_brow := mname.contains("Eyebrows")
+				var is_brow := mname.contains("Eyebrow")
 
 				if is_hair_t or is_brow:
 					var std := StandardMaterial3D.new()
@@ -401,7 +605,7 @@ func _apply_materials_recursive(node: Node, tex_map: Dictionary, outfit_tint: Co
 					mi.set_surface_override_material(s, toon)
 
 	for c in node.get_children():
-		_apply_materials_recursive(c, tex_map, outfit_tint, face_tint, outline_mat)
+		_apply_materials_recursive(c, tex_map, hide_substrings, outfit_tint, face_tint, outline_mat)
 
 
 func set_camera_yaw(yaw_rad: float) -> void:
@@ -460,6 +664,8 @@ func start_roll(direction: Vector3) -> bool:
 		dir = Vector3(-sin(_facing_yaw), 0.0, -cos(_facing_yaw))
 	_roll_dir = dir.normalized()
 	_facing_yaw = atan2(-_roll_dir.x, -_roll_dir.z)
+	if model_pivot != null:
+		model_pivot.rotation.y = _facing_yaw
 	_roll_timer = ROLL_DURATION
 	_iframe_timer = ROLL_IFRAME_DURATION
 	_roll_cd = ROLL_COOLDOWN
@@ -483,14 +689,123 @@ func reset_combat_state() -> void:
 	stamina = max_stamina
 	hunger = max_hunger
 	_stim_timer = 0.0
+	for wcfg: Dictionary in weapon_loadout:
+		wcfg["ammo_in_mag"] = int(wcfg.get("mag_size", 30))
 	ammo_in_mag = mag_size
 	is_reloading = false
 	_reload_timer = 0.0
+	_reload_sfx_stage = 0
+	is_toggling_silencer = false
+	_silencer_toggle_timer = 0.0
+	_silencer_sfx_stage = 0
+	if _reload_audio_player != null and _reload_audio_player.playing:
+		_reload_audio_player.stop()
+	if _weapon_mech_audio_player != null and _weapon_mech_audio_player.playing:
+		_weapon_mech_audio_player.stop()
+	play_draw_sfx()
 	_iframe_timer = 0.0
+	_hit_react_timer = 0.0
 	_interact_progress = 0.0
+	_set_action("idle", true)
 	hp_changed.emit(hp, max_hp)
 	vitals_changed.emit(hp, max_hp, stamina, max_stamina, hunger, max_hunger)
 	ammo_changed.emit(ammo_in_mag, mag_size, is_reloading)
+
+
+func switch_weapon_slot(slot_index: int) -> bool:
+	if is_dead or slot_index < 0 or slot_index >= weapon_loadout.size():
+		return false
+	if slot_index == active_weapon_slot:
+		return false
+	if active_weapon_slot >= 0 and active_weapon_slot < weapon_loadout.size():
+		weapon_loadout[active_weapon_slot]["ammo_in_mag"] = ammo_in_mag
+
+	# Cancel any in-progress reload or silencer toggle safely
+	is_reloading = false
+	_reload_timer = 0.0
+	_reload_sfx_stage = 0
+	is_toggling_silencer = false
+	_silencer_toggle_timer = 0.0
+	_silencer_sfx_stage = 0
+	if _reload_audio_player != null and _reload_audio_player.playing:
+		_reload_audio_player.stop()
+	if _weapon_mech_audio_player != null and _weapon_mech_audio_player.playing:
+		_weapon_mech_audio_player.stop()
+
+	active_weapon_slot = slot_index
+	_fire_cd = 0.12
+	_apply_active_weapon_state(true)
+	return true
+
+
+func _apply_active_weapon_state(emit_and_draw: bool) -> void:
+	if active_weapon_slot < 0 or active_weapon_slot >= weapon_loadout.size():
+		return
+	var wcfg: Dictionary = weapon_loadout[active_weapon_slot]
+	active_weapon_id = str(wcfg.get("id", "m4a1s"))
+	active_weapon_short_name = str(wcfg.get("short_name", "M4A1-S"))
+	weapon_label = str(wcfg.get("label", weapon_label))
+	mag_size = int(wcfg.get("mag_size", 30))
+	ammo_in_mag = clampi(int(wcfg.get("ammo_in_mag", mag_size)), 0, mag_size)
+	fire_interval = float(wcfg.get("fire_interval", 0.14))
+	bullet_damage = float(wcfg.get("bullet_damage", 28.0))
+	pellets = int(wcfg.get("pellets", 1))
+	spread_deg = float(wcfg.get("spread_deg", 2.5))
+	reload_duration = float(wcfg.get("reload_duration", RELOAD_DURATION))
+	supports_silencer = bool(wcfg.get("supports_silencer", false))
+	muzzle_color = wcfg.get("muzzle_color", Color(0.55, 0.92, 1.0)) as Color
+
+	if muzzle_light != null:
+		muzzle_light.light_color = muzzle_color
+	if muzzle_point != null:
+		muzzle_point.position = wcfg.get("muzzle_pos", Vector3(0.0, 0.055, 0.62)) as Vector3
+
+	for wid: String in _weapon_models.keys():
+		var mnode: Node3D = _weapon_models[wid] as Node3D
+		if mnode != null:
+			mnode.visible = (wid == active_weapon_id)
+
+	_bind_cached_weapon_audio(active_weapon_id)
+
+	if emit_and_draw:
+		play_draw_sfx()
+		weapon_switched.emit(active_weapon_slot, active_weapon_id, weapon_label, ammo_in_mag, mag_size)
+		ammo_changed.emit(ammo_in_mag, mag_size, is_reloading)
+
+
+func get_weapon_count() -> int:
+	return weapon_loadout.size()
+
+
+func get_active_weapon_slot() -> int:
+	return active_weapon_slot
+
+
+func get_active_weapon_id() -> String:
+	return active_weapon_id
+
+
+func get_weapon_model(weapon_id: String) -> Node3D:
+	return _weapon_models.get(weapon_id, null) as Node3D
+
+
+func get_weapon_loadout_summary() -> Array[Dictionary]:
+	if active_weapon_slot >= 0 and active_weapon_slot < weapon_loadout.size():
+		weapon_loadout[active_weapon_slot]["ammo_in_mag"] = ammo_in_mag
+	var summary: Array[Dictionary] = []
+	for i: int in range(weapon_loadout.size()):
+		var w: Dictionary = weapon_loadout[i]
+		summary.append({
+			"slot_index": i,
+			"slot": int(w.get("slot", i + 1)),
+			"id": str(w.get("id", "")),
+			"short_name": str(w.get("short_name", "")),
+			"label": str(w.get("label", "")),
+			"ammo_in_mag": int(w.get("ammo_in_mag", 0)),
+			"mag_size": int(w.get("mag_size", 30)),
+			"active": i == active_weapon_slot,
+		})
+	return summary
 
 
 func take_damage(amount: float) -> bool:
@@ -504,8 +819,12 @@ func take_damage(amount: float) -> bool:
 	if hp <= 0.0:
 		is_dead = true
 		velocity = Vector3.ZERO
-		_set_action("idle")
+		_hit_react_timer = 0.0
+		_set_action("death", true)
 		player_died.emit()
+	elif _roll_timer <= 0.0 and anim_player != null and anim_player.has_animation("hit"):
+		_hit_react_timer = HIT_REACT_DURATION
+		_play_clip("hit", true)
 	return true
 
 
@@ -541,12 +860,32 @@ func apply_stimulant(duration_sec: float = 6.0) -> void:
 
 
 func start_reload() -> bool:
-	if is_dead or is_reloading or ammo_in_mag >= mag_size:
+	if is_dead or is_reloading or is_toggling_silencer or ammo_in_mag >= mag_size:
 		return false
 	is_reloading = true
-	_reload_timer = RELOAD_DURATION
+	_reload_timer = reload_duration
+	_reload_sfx_stage = 1
+	_play_reload_sfx(_reload_clip_out_stream)
 	ammo_changed.emit(ammo_in_mag, mag_size, true)
 	return true
+
+
+func toggle_silencer() -> bool:
+	if not supports_silencer or is_dead or is_reloading or is_toggling_silencer or _roll_timer > 0.0:
+		return false
+	is_toggling_silencer = true
+	_silencer_target_state = not silencer_attached
+	_silencer_toggle_timer = SILENCER_TOGGLE_DURATION
+	_silencer_sfx_stage = 1
+	if _silencer_target_state:
+		_play_mech_sfx(_silencer_screw_on_start_stream)
+	else:
+		_play_mech_sfx(_silencer_off_stream)
+	return true
+
+
+func play_draw_sfx() -> void:
+	_play_mech_sfx(_weapon_draw_stream)
 
 
 func play_stratagem_step_fx() -> void:
@@ -573,13 +912,53 @@ func update_character(
 	_roll_cd = maxf(0.0, _roll_cd - delta)
 	_fire_cd = maxf(0.0, _fire_cd - delta)
 	_iframe_timer = maxf(0.0, _iframe_timer - delta)
+	_hit_react_timer = maxf(0.0, _hit_react_timer - delta)
 
 	if is_reloading:
 		_reload_timer -= delta
+		var reload_ratio: float = (reload_duration - _reload_timer) / maxf(0.1, reload_duration)
+		var use_silenced_bolt: bool = supports_silencer and silencer_attached
+		if _reload_sfx_stage < 2 and reload_ratio >= 0.31:
+			_reload_sfx_stage = 2
+			_play_reload_sfx(_reload_clip_in_stream)
+		elif _reload_sfx_stage < 3 and reload_ratio >= 0.48:
+			_reload_sfx_stage = 3
+			_play_reload_sfx(_reload_clip_hit_stream)
+		elif _reload_sfx_stage < 4 and reload_ratio >= 0.67:
+			_reload_sfx_stage = 4
+			var bb: AudioStream = _reload_bolt_back_stream if (use_silenced_bolt or _reload_bolt_back_unsilenced_stream == null) else _reload_bolt_back_unsilenced_stream
+			_play_reload_sfx(bb)
+		elif _reload_sfx_stage < 5 and reload_ratio >= 0.83:
+			_reload_sfx_stage = 5
+			var bf: AudioStream = _reload_bolt_forward_stream if (use_silenced_bolt or _reload_bolt_forward_unsilenced_stream == null) else _reload_bolt_forward_unsilenced_stream
+			_play_reload_sfx(bf)
 		if _reload_timer <= 0.0:
 			is_reloading = false
+			_reload_sfx_stage = 0
 			ammo_in_mag = mag_size
+			if active_weapon_slot >= 0 and active_weapon_slot < weapon_loadout.size():
+				weapon_loadout[active_weapon_slot]["ammo_in_mag"] = ammo_in_mag
+			_play_mech_sfx(_reload_add_ammo_stream)
 			ammo_changed.emit(ammo_in_mag, mag_size, false)
+
+	if is_toggling_silencer:
+		_silencer_toggle_timer -= delta
+		var toggle_elapsed: float = SILENCER_TOGGLE_DURATION - _silencer_toggle_timer
+		var screw_times: Array[float] = [0.22, 0.42, 0.62, 0.82, 1.02]
+		for si: int in range(screw_times.size()):
+			var target_stage: int = si + 2
+			if _silencer_sfx_stage < target_stage and toggle_elapsed >= screw_times[si]:
+				_silencer_sfx_stage = target_stage
+				if si < _silencer_screw_streams.size():
+					_play_mech_sfx(_silencer_screw_streams[si])
+				break
+		if _silencer_sfx_stage < 7 and toggle_elapsed >= 1.22:
+			_silencer_sfx_stage = 7
+			_play_mech_sfx(_silencer_on_stream if _silencer_target_state else _silencer_screw_off_end_stream)
+		if _silencer_toggle_timer <= 0.0:
+			is_toggling_silencer = false
+			_silencer_sfx_stage = 0
+			silencer_attached = _silencer_target_state
 
 	if is_dead:
 		velocity = Vector3.ZERO
@@ -606,13 +985,28 @@ func update_character(
 
 	if _roll_timer > 0.0:
 		_roll_timer = maxf(0.0, _roll_timer - delta)
-		var speed_curve: float = sin((_roll_timer / ROLL_DURATION) * PI) * 0.65 + 0.35
-		velocity = _roll_dir * (roll_speed * speed_curve)
-		move_and_slide()
-		global_position = SquadConfig.clamp_playable(Vector3(global_position.x, 0.0, global_position.z))
-		_apply_facing(delta, 18.0)
-		_set_interact_bar_visible(false)
-		return
+		var roll_progress: float = 1.0 - (_roll_timer / ROLL_DURATION)
+		var has_cancel_input: bool = move_input.length_squared() > 0.04 or want_shoot or want_interact
+		if _roll_timer <= 0.0 or (roll_progress >= ROLL_CANCEL_PROGRESS and has_cancel_input):
+			_roll_timer = 0.0
+			play_draw_sfx()
+		else:
+			var speed_curve: float
+			if roll_progress < 0.45:
+				# Snappy front-loaded burst on roll startup instead of starting at 0.35
+				speed_curve = lerpf(1.45, 1.0, ease(roll_progress / 0.45, 0.7))
+			else:
+				# Keep original recovery/tail deceleration curve unchanged
+				speed_curve = sin((_roll_timer / ROLL_DURATION) * PI) * 0.65 + 0.35
+			if anim_player != null and anim_player.current_animation == "roll":
+				var tail_t: float = clampf((roll_progress - 0.25) / 0.25, 0.0, 1.0)
+				anim_player.speed_scale = lerpf(3.15, 2.05, tail_t)
+			velocity = _roll_dir * (roll_speed * speed_curve)
+			move_and_slide()
+			global_position = SquadConfig.clamp_playable(Vector3(global_position.x, 0.0, global_position.z))
+			_apply_facing(delta, 18.0)
+			_set_interact_bar_visible(false)
+			return
 
 	if not showcase_override_action.is_empty():
 		if move_input.length_squared() > 0.05 or want_shoot or want_roll:
@@ -652,13 +1046,43 @@ func _update_active_player(
 			return
 
 	if want_shoot:
-		_has_click_move = false
 		_set_interact_bar_visible(false)
+		_interact_progress = 0.0
 		var to_aim := Vector3(aim_world_pos.x - global_position.x, 0.0, aim_world_pos.z - global_position.z)
 		if to_aim.length_squared() > 0.02:
 			_facing_yaw = atan2(-to_aim.x, -to_aim.z)
-		velocity = Vector3.ZERO
-		_set_action("shoot")
+
+		var shoot_move_vec := Vector3.ZERO
+		if move_input.length_squared() > 0.02:
+			_has_click_move = false
+			shoot_move_vec = move_input.normalized()
+		elif _has_click_move:
+			var to_dest_s := Vector3(_click_move_target.x - global_position.x, 0.0, _click_move_target.z - global_position.z)
+			if to_dest_s.length() > 0.25:
+				shoot_move_vec = to_dest_s.normalized()
+			else:
+				_has_click_move = false
+
+		if shoot_move_vec.length_squared() > 0.01:
+			var spd_mult_s: float = 1.30 if _stim_timer > 0.0 else (0.86 if hunger <= 5.0 else 1.0)
+			velocity = shoot_move_vec * (move_speed * spd_mult_s * SHOOT_MOVE_SPEED_MULT)
+			move_and_slide()
+			global_position = SquadConfig.clamp_playable(Vector3(global_position.x, 0.0, global_position.z))
+			if is_reloading:
+				_set_action("reload", false, "reload_move" if _has_clip("reload_move") else _pick_directional_move_clip(shoot_move_vec))
+			else:
+				_set_action("shoot", false, _pick_directional_move_clip(shoot_move_vec))
+			_step_dust_timer -= delta
+			if _step_dust_timer <= 0.0:
+				_step_dust_timer = 0.30
+				_spawn_dust_puff(global_position + Vector3(0.0, 0.08, 0.0), Color(0.76, 0.72, 0.66, 0.42), 1)
+		else:
+			velocity = Vector3.ZERO
+			if is_reloading:
+				_set_action("reload", false, "reload" if _has_clip("reload") else "idle")
+			else:
+				_set_action("shoot", false, "shoot")
+
 		_try_fire_weapon(aim_world_pos)
 		_apply_facing(delta, 20.0)
 		return
@@ -691,14 +1115,20 @@ func _update_active_player(
 		move_and_slide()
 		global_position = SquadConfig.clamp_playable(Vector3(global_position.x, 0.0, global_position.z))
 		_facing_yaw = atan2(-move_vec.x, -move_vec.z)
-		_set_action("walk")
+		if is_reloading:
+			_set_action("reload", false, "reload_move" if _has_clip("reload_move") else "walk")
+		else:
+			_set_action("walk")
 		_step_dust_timer -= delta
 		if _step_dust_timer <= 0.0:
 			_step_dust_timer = 0.28
 			_spawn_dust_puff(global_position + Vector3(0.0, 0.08, 0.0), Color(0.76, 0.72, 0.66, 0.42), 1)
 	else:
 		velocity = Vector3.ZERO
-		_set_action("idle")
+		if is_reloading:
+			_set_action("reload", false, "reload" if _has_clip("reload") else "idle")
+		else:
+			_set_action("idle")
 
 	_apply_facing(delta, 14.0)
 
@@ -708,21 +1138,52 @@ func _apply_facing(delta: float, turn_speed: float) -> void:
 		model_pivot.rotation.y = lerp_angle(model_pivot.rotation.y, _facing_yaw, clampf(delta * turn_speed, 0.0, 1.0))
 
 
-func _set_action(action_name: String, force_restart: bool = false) -> void:
+func _has_clip(clip_name: String) -> bool:
+	return anim_player != null and anim_player.has_animation(clip_name)
+
+
+func _pick_directional_move_clip(move_dir: Vector3) -> String:
+	var fwd := Vector3(-sin(_facing_yaw), 0.0, -cos(_facing_yaw))
+	var right := Vector3(cos(_facing_yaw), 0.0, -sin(_facing_yaw))
+	var fwd_dot: float = move_dir.dot(fwd)
+	var right_dot: float = move_dir.dot(right)
+	if absf(fwd_dot) >= absf(right_dot):
+		if fwd_dot >= 0.0:
+			return "walk"
+		return "run_backwards" if _has_clip("run_backwards") else "walk"
+	if right_dot >= 0.0:
+		return "strafe_right" if _has_clip("strafe_right") else "walk"
+	return "strafe_left" if _has_clip("strafe_left") else "walk"
+
+
+func _set_action(action_name: String, force_restart: bool = false, clip_override: String = "") -> void:
+	var target_clip: String = clip_override if not clip_override.is_empty() else action_name
+	var hold_hit: bool = _hit_react_timer > 0.0 and action_name not in ["roll", "death"]
 	if current_action == action_name and not force_restart:
-		if anim_player != null and action_name != "roll" and not anim_player.is_playing():
-			_play_clip(action_name)
+		if not hold_hit and anim_player != null and action_name not in ["roll", "death"]:
+			if not anim_player.is_playing() or anim_player.current_animation != target_clip:
+				_play_clip(target_clip)
 		return
 	current_action = action_name
-	_play_clip(action_name, force_restart)
+	if not hold_hit:
+		_play_clip(target_clip, force_restart)
 	action_changed.emit(char_id, action_name)
 
 
 func _play_clip(action_name: String, force_restart: bool = false) -> void:
 	if anim_player == null or not anim_player.has_animation(action_name):
 		return
-	var blend: float = 0.08 if action_name in ["roll", "shoot"] else 0.16
-	anim_player.speed_scale = 2.05 if action_name == "roll" else (1.12 if action_name == "walk" else 1.0)
+	var blend: float = 0.03 if action_name == "roll" else (0.08 if action_name in ["shoot", "hit", "death"] else 0.14)
+	if action_name == "roll":
+		anim_player.speed_scale = 3.15
+	elif action_name in ["walk", "strafe_left", "strafe_right", "run_backwards"]:
+		anim_player.speed_scale = 1.12
+	elif action_name == "reload":
+		anim_player.speed_scale = 1.5
+	elif action_name == "hit":
+		anim_player.speed_scale = 1.6
+	else:
+		anim_player.speed_scale = 1.0
 	if force_restart:
 		anim_player.stop()
 	anim_player.play(action_name, blend)
@@ -733,7 +1194,7 @@ func get_available_animations() -> PackedStringArray:
 
 
 func _try_fire_weapon(target_world_pos: Vector3) -> void:
-	if _fire_cd > 0.0 or is_reloading:
+	if _fire_cd > 0.0 or is_reloading or is_toggling_silencer:
 		return
 	if showcase_override_action.is_empty():
 		if infinite_ammo:
@@ -743,15 +1204,18 @@ func _try_fire_weapon(target_world_pos: Vector3) -> void:
 				start_reload()
 				return
 			ammo_in_mag -= 1
+			if active_weapon_slot >= 0 and active_weapon_slot < weapon_loadout.size():
+				weapon_loadout[active_weapon_slot]["ammo_in_mag"] = ammo_in_mag
 			ammo_changed.emit(ammo_in_mag, mag_size, false)
 			if ammo_in_mag <= 0:
 				start_reload()
 
 	_fire_cd = fire_interval
 	_muzzle_flash_timer = 0.07
+	_play_fire_sfx()
 
 	var fwd := Vector3(-sin(_facing_yaw), 0.0, -cos(_facing_yaw))
-	var muzzle_pos: Vector3 = global_position + Vector3(0.0, 1.32, 0.0) + fwd * 0.90
+	var muzzle_pos: Vector3 = muzzle_point.global_position if (muzzle_point != null and muzzle_point.is_inside_tree()) else (global_position + Vector3(0.0, 1.32, 0.0) + fwd * 0.90)
 	var base_dir := Vector3(target_world_pos.x - muzzle_pos.x, 0.0, target_world_pos.z - muzzle_pos.z)
 	if base_dir.length_squared() < 0.05:
 		base_dir = fwd
@@ -764,6 +1228,170 @@ func _try_fire_weapon(target_world_pos: Vector3) -> void:
 		var end_pos: Vector3 = muzzle_pos + shot_dir * randf_range(14.0, 18.0)
 		_spawn_tracer(muzzle_pos, end_pos)
 		shot_fired.emit(muzzle_pos, shot_dir, bullet_damage)
+
+
+func _load_stream_list(raw_paths: Variant) -> Array[AudioStream]:
+	var result: Array[AudioStream] = []
+	if raw_paths is Array:
+		for raw_path: Variant in raw_paths:
+			var stream := _load_audio_stream(str(raw_path))
+			if stream != null:
+				result.append(stream)
+	elif raw_paths is String:
+		var single_stream := _load_audio_stream(raw_paths)
+		if single_stream != null:
+			result.append(single_stream)
+	return result
+
+
+func _setup_loadout_audio() -> void:
+	_weapon_audio_cache.clear()
+	for wcfg: Dictionary in weapon_loadout:
+		var wid: String = str(wcfg.get("id", ""))
+		var sfx_cfg: Dictionary = wcfg.get("sfx", {}) as Dictionary
+		if wid.is_empty():
+			continue
+		_weapon_audio_cache[wid] = {
+			"fire": _load_stream_list(sfx_cfg.get("fire", [])),
+			"fire_distant": _load_stream_list(sfx_cfg.get("fire_distant", [])),
+			"fire_unsilenced": _load_stream_list(sfx_cfg.get("fire_unsilenced", [])),
+			"fire_unsilenced_distant": _load_stream_list(sfx_cfg.get("fire_unsilenced_distant", [])),
+			"clip_out": _load_audio_stream(str(sfx_cfg.get("clip_out", ""))),
+			"clip_in": _load_audio_stream(str(sfx_cfg.get("clip_in", ""))),
+			"clip_hit": _load_audio_stream(str(sfx_cfg.get("clip_hit", ""))),
+			"bolt_back": _load_audio_stream(str(sfx_cfg.get("bolt_back", ""))),
+			"bolt_forward": _load_audio_stream(str(sfx_cfg.get("bolt_forward", ""))),
+			"bolt_back_unsilenced": _load_audio_stream(str(sfx_cfg.get("bolt_back_unsilenced", ""))),
+			"bolt_forward_unsilenced": _load_audio_stream(str(sfx_cfg.get("bolt_forward_unsilenced", ""))),
+			"add_ammo": _load_audio_stream(str(sfx_cfg.get("add_ammo", ""))),
+			"draw": _load_audio_stream(str(sfx_cfg.get("draw", ""))),
+			"silencer_on": _load_audio_stream(str(sfx_cfg.get("silencer_on", ""))),
+			"silencer_off": _load_audio_stream(str(sfx_cfg.get("silencer_off", ""))),
+			"silencer_screw_on_start": _load_audio_stream(str(sfx_cfg.get("silencer_screw_on_start", ""))),
+			"silencer_screw_off_end": _load_audio_stream(str(sfx_cfg.get("silencer_screw_off_end", ""))),
+			"silencer_screws": _load_stream_list(sfx_cfg.get("silencer_screws", [])),
+		}
+
+	if _fire_audio_pool.is_empty():
+		for i: int in range(FIRE_AUDIO_POOL_SIZE):
+			var player := AudioStreamPlayer.new()
+			player.name = "WeaponFireAudio%d" % i
+			player.volume_db = FIRE_AUDIO_VOLUME_DB
+			add_child(player)
+			_fire_audio_pool.append(player)
+
+	if _distant_audio_pool.is_empty():
+		for i: int in range(FIRE_AUDIO_POOL_SIZE):
+			var dplayer := AudioStreamPlayer.new()
+			dplayer.name = "WeaponDistantAudio%d" % i
+			dplayer.volume_db = FIRE_DISTANT_VOLUME_DB
+			add_child(dplayer)
+			_distant_audio_pool.append(dplayer)
+
+	if _reload_audio_player == null:
+		_reload_audio_player = AudioStreamPlayer.new()
+		_reload_audio_player.name = "WeaponReloadAudio"
+		_reload_audio_player.volume_db = RELOAD_AUDIO_VOLUME_DB
+		add_child(_reload_audio_player)
+
+	if _weapon_mech_audio_player == null:
+		_weapon_mech_audio_player = AudioStreamPlayer.new()
+		_weapon_mech_audio_player.name = "WeaponMechAudio"
+		_weapon_mech_audio_player.volume_db = RELOAD_AUDIO_VOLUME_DB
+		add_child(_weapon_mech_audio_player)
+
+	_bind_cached_weapon_audio(active_weapon_id)
+
+
+func _bind_cached_weapon_audio(weapon_id: String) -> void:
+	var bank: Dictionary = _weapon_audio_cache.get(weapon_id, {}) as Dictionary
+	if bank.is_empty():
+		return
+	_fire_streams = bank.get("fire", []) as Array[AudioStream]
+	_fire_distant_streams = bank.get("fire_distant", []) as Array[AudioStream]
+	_fire_unsilenced_streams = bank.get("fire_unsilenced", []) as Array[AudioStream]
+	_fire_unsilenced_distant_streams = bank.get("fire_unsilenced_distant", []) as Array[AudioStream]
+
+	_reload_clip_out_stream = bank.get("clip_out", null) as AudioStream
+	_reload_clip_in_stream = bank.get("clip_in", null) as AudioStream
+	_reload_clip_hit_stream = bank.get("clip_hit", null) as AudioStream
+	_reload_bolt_back_stream = bank.get("bolt_back", null) as AudioStream
+	_reload_bolt_forward_stream = bank.get("bolt_forward", null) as AudioStream
+	_reload_bolt_back_unsilenced_stream = bank.get("bolt_back_unsilenced", null) as AudioStream
+	_reload_bolt_forward_unsilenced_stream = bank.get("bolt_forward_unsilenced", null) as AudioStream
+	_reload_add_ammo_stream = bank.get("add_ammo", null) as AudioStream
+	_weapon_draw_stream = bank.get("draw", null) as AudioStream
+
+	_silencer_on_stream = bank.get("silencer_on", null) as AudioStream
+	_silencer_off_stream = bank.get("silencer_off", null) as AudioStream
+	_silencer_screw_on_start_stream = bank.get("silencer_screw_on_start", null) as AudioStream
+	_silencer_screw_off_end_stream = bank.get("silencer_screw_off_end", null) as AudioStream
+	_silencer_screw_streams = bank.get("silencer_screws", []) as Array[AudioStream]
+
+
+func _load_audio_stream(path: String) -> AudioStream:
+	if path.is_empty() or not ResourceLoader.exists(path):
+		return null
+	return load(path) as AudioStream
+
+
+func _play_fire_sfx() -> void:
+	var use_silenced: bool = supports_silencer and silencer_attached
+	var active_fire: Array[AudioStream] = _fire_streams if (use_silenced or _fire_unsilenced_streams.is_empty()) else _fire_unsilenced_streams
+	if not active_fire.is_empty() and not _fire_audio_pool.is_empty():
+		var player: AudioStreamPlayer = _fire_audio_pool[_fire_audio_idx % _fire_audio_pool.size()]
+		_fire_audio_idx = (_fire_audio_idx + 1) % _fire_audio_pool.size()
+		player.stream = active_fire[randi() % active_fire.size()]
+		player.volume_db = FIRE_AUDIO_VOLUME_DB if use_silenced else (FIRE_AUDIO_VOLUME_DB + 2.0)
+		player.pitch_scale = randf_range(0.96, 1.04)
+		player.play()
+
+	var active_distant: Array[AudioStream] = _fire_distant_streams if (use_silenced or _fire_unsilenced_distant_streams.is_empty()) else _fire_unsilenced_distant_streams
+	if not active_distant.is_empty() and not _distant_audio_pool.is_empty():
+		var dplayer: AudioStreamPlayer = _distant_audio_pool[_distant_audio_idx % _distant_audio_pool.size()]
+		_distant_audio_idx = (_distant_audio_idx + 1) % _distant_audio_pool.size()
+		dplayer.stream = active_distant[randi() % active_distant.size()]
+		dplayer.volume_db = FIRE_DISTANT_VOLUME_DB if use_silenced else (FIRE_DISTANT_VOLUME_DB + 3.0)
+		dplayer.pitch_scale = randf_range(0.96, 1.04)
+		dplayer.play()
+
+
+func _play_reload_sfx(stream: AudioStream) -> void:
+	if stream == null or _reload_audio_player == null:
+		return
+	_reload_audio_player.stream = stream
+	_reload_audio_player.pitch_scale = randf_range(0.98, 1.02)
+	_reload_audio_player.play()
+
+
+func _play_mech_sfx(stream: AudioStream) -> void:
+	if stream == null or _weapon_mech_audio_player == null:
+		return
+	_weapon_mech_audio_player.stream = stream
+	_weapon_mech_audio_player.pitch_scale = randf_range(0.98, 1.02)
+	_weapon_mech_audio_player.play()
+
+
+func has_weapon_audio() -> bool:
+	var base_ok: bool = (
+		not _fire_streams.is_empty()
+		and not _fire_distant_streams.is_empty()
+		and _weapon_draw_stream != null
+		and _reload_clip_out_stream != null
+		and _reload_clip_in_stream != null
+		and _reload_add_ammo_stream != null
+		and not _fire_audio_pool.is_empty()
+		and _reload_audio_player != null
+		and _weapon_mech_audio_player != null
+	)
+	if supports_silencer:
+		return (
+			base_ok
+			and not _fire_unsilenced_streams.is_empty()
+			and _silencer_screw_streams.size() == 5
+			and _reload_clip_hit_stream != null
+		)
+	return base_ok
 
 
 func _spawn_tracer(from_pos: Vector3, to_pos: Vector3) -> void:

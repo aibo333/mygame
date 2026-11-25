@@ -12,6 +12,7 @@ signal train_blueprint_requested()
 signal hub_requested()
 signal build_menu_requested()
 signal quickbelt_slot_requested(slot_index: int)
+signal weapon_slot_requested(slot_index: int)
 signal cheat_panel_requested()
 
 var _squad_cards: Array[Dictionary] = []
@@ -44,6 +45,7 @@ var _weapon_name_label: Label = null
 var _ammo_big_label: Label = null
 var _ammo_bar: ProgressBar = null
 var _weapon_hint_label: Label = null
+var _weapon_slot_buttons: Array[Button] = []
 
 # Bottom-Center: 5-Slot Quickbelt
 var _belt_buttons: Array[Button] = []
@@ -183,7 +185,7 @@ func _build_top_left_bar(root: Control) -> void:
 	vbox.add_child(_mission_label)
 
 	_status_label = Label.new()
-	_status_label.text = "WASD 移動 ｜ 左鍵射擊 ｜ 右鍵選單互動 ｜ B 建造防禦 ｜ 1-5 快速腰帶 ｜ Space 翻滾"
+	_status_label.text = "WASD 移動 ｜ 左鍵射擊 ｜ 1-3 切槍 ｜ 4-8 快速腰帶 ｜ 右鍵選單 ｜ B 建造 ｜ Space 翻滾"
 	_status_label.add_theme_font_size_override("font_size", 14)
 	_status_label.add_theme_color_override("font_color", Color(0.84, 0.90, 0.96))
 	vbox.add_child(_status_label)
@@ -365,7 +367,7 @@ func _create_vital_row(parent: VBoxContainer, title_text: String, bar_color: Col
 	return {"bar": bar, "label": val}
 
 
-# --- BOTTOM-CENTER: 5-Slot Quickbelt (快速腰帶 1-5) ---
+# --- BOTTOM-CENTER: 5-Slot Quickbelt (快速腰帶 4-8) ---
 func _build_bottom_center_quickbelt(root: Control) -> void:
 	var panel := PanelContainer.new()
 	panel.name = "QuickbeltPanel"
@@ -389,7 +391,7 @@ func _build_bottom_center_quickbelt(root: Control) -> void:
 		btn.custom_minimum_size = Vector2(120.0, 68.0)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.add_theme_font_size_override("font_size", 15)
-		btn.text = "[%d] 道具" % (i + 1)
+		btn.text = "[%d] 道具" % (i + 4)
 		var slot_idx: int = i
 		btn.pressed.connect(func(): quickbelt_slot_requested.emit(slot_idx))
 		row.add_child(btn)
@@ -401,8 +403,8 @@ func _build_bottom_right_weapon_panel(root: Control, squad: Array[SquadCharacter
 	var panel := PanelContainer.new()
 	panel.name = "WeaponAmmoPanel"
 	panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	panel.offset_left = -324.0
-	panel.offset_top = -152.0
+	panel.offset_left = -356.0
+	panel.offset_top = -188.0
 	panel.offset_right = -16.0
 	panel.offset_bottom = -14.0
 	panel.add_theme_stylebox_override("panel", _make_panel_style(Color(0.11, 0.10, 0.10, 0.92), Color(0.84, 0.64, 0.34, 0.88)))
@@ -413,9 +415,25 @@ func _build_bottom_right_weapon_panel(root: Control, squad: Array[SquadCharacter
 	vbox.add_theme_constant_override("separation", 6)
 	panel.add_child(vbox)
 
-	var w_label: String = squad[0].weapon_label if not squad.is_empty() else "突擊步槍 AR-15"
+	var slot_row := HBoxContainer.new()
+	slot_row.add_theme_constant_override("separation", 6)
+	vbox.add_child(slot_row)
+	_weapon_slot_buttons.clear()
+	var default_slots := SquadConfig.get_default_loadout()
+	for i: int in range(default_slots.size()):
+		var wcfg: Dictionary = default_slots[i]
+		var wbtn := Button.new()
+		wbtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		wbtn.add_theme_font_size_override("font_size", 13)
+		wbtn.text = "[%d] %s" % [i + 1, str(wcfg.get("short_name", ""))]
+		var w_idx: int = i
+		wbtn.pressed.connect(func(): weapon_slot_requested.emit(w_idx))
+		slot_row.add_child(wbtn)
+		_weapon_slot_buttons.append(wbtn)
+
+	var w_label: String = squad[0].weapon_label if not squad.is_empty() else "M4A1-S 消音突擊步槍"
 	_weapon_name_label = Label.new()
-	_weapon_name_label.text = "🔫 %s" % w_label
+	_weapon_name_label.text = "🔫 [1] %s" % w_label
 	_weapon_name_label.add_theme_font_size_override("font_size", 16)
 	_weapon_name_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.56))
 	vbox.add_child(_weapon_name_label)
@@ -447,7 +465,7 @@ func _build_bottom_right_weapon_panel(root: Control, squad: Array[SquadCharacter
 	vbox.add_child(_ammo_bar)
 
 	_weapon_hint_label = Label.new()
-	_weapon_hint_label.text = "左鍵射擊 ｜ 右鍵物件選單 ｜ [B] 建造"
+	_weapon_hint_label.text = "[1-3] 切槍 ｜ [V] 消音器 ｜ [B] 建造"
 	_weapon_hint_label.add_theme_font_size_override("font_size", 14)
 	_weapon_hint_label.add_theme_color_override("font_color", Color(0.78, 0.82, 0.88))
 	vbox.add_child(_weapon_hint_label)
@@ -503,14 +521,32 @@ func update_quickbelt(slots: Array[Dictionary], infinite_mode: bool = false) -> 
 		var s: Dictionary = slots[i]
 		var cnt: int = int(s.get("count", 0))
 		var btn: Button = _belt_buttons[i]
+		var key_num: int = i + 4
 		if infinite_mode:
-			btn.text = "[%d] %s %s\n剩餘 ∞" % [i + 1, str(s.get("icon", "")), str(s.get("name", ""))]
+			btn.text = "[%d] %s %s\n剩餘 ∞" % [key_num, str(s.get("icon", "")), str(s.get("name", ""))]
 			btn.disabled = false
 			btn.modulate = Color(0.76, 1.0, 0.84)
 		else:
-			btn.text = "[%d] %s %s\n剩餘 x%d" % [i + 1, str(s.get("icon", "")), str(s.get("name", "")), cnt]
+			btn.text = "[%d] %s %s\n剩餘 x%d" % [key_num, str(s.get("icon", "")), str(s.get("name", "")), cnt]
 			btn.disabled = cnt <= 0
 			btn.modulate = Color(1.0, 0.96, 0.86) if cnt > 0 else Color(0.56, 0.54, 0.52)
+
+
+func update_weapon_info(slot_index: int, _weapon_id: String, weapon_label: String, supports_silencer: bool, silencer_attached: bool, loadout_summary: Array[Dictionary] = []) -> void:
+	if _weapon_name_label != null:
+		var sil_tag: String = (" (消音)" if silencer_attached else " (無消音)") if supports_silencer else ""
+		_weapon_name_label.text = "🔫 [%d] %s%s" % [slot_index + 1, weapon_label, sil_tag]
+	if _weapon_hint_label != null:
+		if supports_silencer:
+			_weapon_hint_label.text = "[1-3] 切槍 ｜ [V] 消音器 ｜ [B] 建造"
+		else:
+			_weapon_hint_label.text = "[1-3] 切槍 ｜ 左鍵射擊 ｜ [B] 建造"
+	for i: int in range(mini(loadout_summary.size(), _weapon_slot_buttons.size())):
+		var entry: Dictionary = loadout_summary[i]
+		var btn: Button = _weapon_slot_buttons[i]
+		var is_cur: bool = (i == slot_index)
+		btn.text = "[%d] %s" % [i + 1, str(entry.get("short_name", ""))]
+		btn.modulate = Color(1.0, 0.92, 0.52) if is_cur else Color(0.72, 0.76, 0.82)
 
 
 func update_cheat_status(god_mode: bool, infinite_resources: bool, pause_spawns: bool) -> void:
@@ -643,6 +679,12 @@ func update_character_action(_char_id: String, action_name: String) -> void:
 			zh = "操作中 🔧"
 		"roll":
 			zh = "翻滾 💨"
+		"reload":
+			zh = "換彈 🔄"
+		"death":
+			zh = "陣亡 💀"
+		"hit":
+			zh = "受擊"
 	_player_state_label.text = zh
 
 

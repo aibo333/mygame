@@ -25,7 +25,13 @@ MANIFEST_PATH = os.path.join(ROOT_DIR, "assets_manifest.json")
 ASSET_TARGETS = [
     "assets/packs/kenney_retro_urban",
     "assets/packs/summer_cuteness_avatar",
+    "assets/packs/aria_idol_cuteness_avatar",
+    "assets/packs/nangong_yu_cuteness_avatar",
+    "assets/packs/cs2_weapons_sound_pack",
     "assets/animations/mixamo",
+    "assets/models/weapons/m4a1s",
+    "assets/models/weapons/ak47",
+    "assets/models/weapons/deagle",
 ]
 
 EXCLUDED_EXTS = {".import", ".tres", ".uid", ".gd", ".gdshader", ".tscn"}

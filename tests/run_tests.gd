@@ -31,11 +31,51 @@ func _test_assets_and_config() -> void:
 	var ids: PackedStringArray = SquadConfig.get_squad_ids()
 	_assert(ids.size() == 1, "Solo player mode active (AI followers removed)")
 	_assert(ResourceLoader.exists(SquadConfig.AVATAR_FBX_PATH), "SummerCuteness avatar FBX exists")
+	var avatar_catalog: Array[Dictionary] = SquadConfig.get_avatar_catalog()
+	_assert(avatar_catalog.size() >= 3, "Avatar catalog lists >= 3 unique characters (got %d)" % avatar_catalog.size())
+	for acfg: Dictionary in avatar_catalog:
+		var aid: String = str(acfg.get("id", ""))
+		var mpath: String = str(acfg.get("model_path", ""))
+		_assert(ResourceLoader.exists(mpath), "Avatar catalog model exists: %s" % aid)
+		var packed_av := load(mpath) as PackedScene
+		_assert(packed_av != null, "Avatar catalog model loads as PackedScene: %s" % aid)
 	for anim_key: String in ["idle", "walk", "shoot", "roll"]:
 		var apath: String = str(SquadConfig.MIXAMO_ANIMS.get(anim_key, ""))
 		_assert(ResourceLoader.exists(apath), "Mixamo animation FBX exists: %s" % anim_key)
 	for piece: String in ["road-asphalt-center", "wall-a-garage", "wall-b-roof-slant", "truck-green", "scaffolding-structure"]:
 		_assert(ResourceLoader.exists(SquadConfig.KENNEY_DIR + piece + ".glb"), "Kenney Retro Urban asset exists: %s" % piece)
+	for sfx_key: String in ["clip_out", "clip_in", "clip_hit", "bolt_back", "bolt_forward", "bolt_back_unsilenced", "bolt_forward_unsilenced", "add_ammo", "draw", "silencer_on", "silencer_off", "silencer_screw_on_start", "silencer_screw_off_end"]:
+		var spath: String = str(SquadConfig.WEAPON_M4A1_SFX.get(sfx_key, ""))
+		_assert(ResourceLoader.exists(spath), "M4A1 SFX exists: %s" % sfx_key)
+	for list_key: String in ["fire", "fire_distant", "fire_unsilenced", "fire_unsilenced_distant", "silencer_screws"]:
+		var sarr: Array = SquadConfig.WEAPON_M4A1_SFX.get(list_key, []) as Array
+		var all_ok: bool = not sarr.is_empty()
+		for item_path: Variant in sarr:
+			if not ResourceLoader.exists(str(item_path)):
+				all_ok = false
+				break
+		_assert(all_ok, "M4A1 SFX list exists (%d files): %s" % [sarr.size(), list_key])
+
+	_assert(ResourceLoader.exists(SquadConfig.WEAPON_AK47_GLB_PATH), "AK-47 model GLB exists")
+	_assert(ResourceLoader.exists(SquadConfig.WEAPON_DEAGLE_GLB_PATH), "Desert Eagle model GLB exists")
+	for sfx_key: String in ["clip_out", "clip_in", "bolt_back", "bolt_forward", "add_ammo", "draw"]:
+		_assert(ResourceLoader.exists(str(SquadConfig.WEAPON_AK47_SFX.get(sfx_key, ""))), "AK-47 SFX exists: %s" % sfx_key)
+		_assert(ResourceLoader.exists(str(SquadConfig.WEAPON_DEAGLE_SFX.get(sfx_key, ""))), "Desert Eagle SFX exists: %s" % sfx_key)
+	for list_key: String in ["fire", "fire_distant"]:
+		var ak_arr: Array = SquadConfig.WEAPON_AK47_SFX.get(list_key, []) as Array
+		var ak_ok: bool = not ak_arr.is_empty()
+		for p: Variant in ak_arr:
+			if not ResourceLoader.exists(str(p)):
+				ak_ok = false
+				break
+		_assert(ak_ok, "AK-47 SFX list exists (%d files): %s" % [ak_arr.size(), list_key])
+		var de_arr: Array = SquadConfig.WEAPON_DEAGLE_SFX.get(list_key, []) as Array
+		var de_ok: bool = not de_arr.is_empty()
+		for p: Variant in de_arr:
+			if not ResourceLoader.exists(str(p)):
+				de_ok = false
+				break
+		_assert(de_ok, "Desert Eagle SFX list exists (%d files): %s" % [de_arr.size(), list_key])
 
 
 func _test_main_scene_player_and_phase2() -> void:
@@ -56,6 +96,13 @@ func _test_main_scene_player_and_phase2() -> void:
 	var player: SquadCharacter = world.get_active_character()
 	_assert(player != null and player.skeleton != null and player.skeleton.name == "GeneralSkeleton", "Player uses retargeted GeneralSkeleton")
 	_assert(player.anim_player != null, "Mixamo AnimationPlayer attached")
+	_assert(player.has_weapon_audio(), "Player M4A1 weapon audio loaded and pool initialized")
+	var init_silenced: bool = player.silencer_attached
+	_assert(player.toggle_silencer() and player.is_toggling_silencer, "Player starts M4A1 silencer toggle sequence")
+	for _st: int in range(16):
+		player.update_character(0.1, Vector3.ZERO, player.global_position + Vector3(0.0, 0.0, -10.0), false, false, false, "")
+	_assert(not player.is_toggling_silencer and player.silencer_attached != init_silenced, "Player completes M4A1 silencer toggle cleanly")
+	player.silencer_attached = true
 
 	var anims: PackedStringArray = player.get_available_animations()
 	var has_all: bool = (
@@ -64,8 +111,31 @@ func _test_main_scene_player_and_phase2() -> void:
 		and anims.has("shoot")
 		and anims.has("interact")
 		and anims.has("roll")
+		and anims.has("strafe_left")
+		and anims.has("strafe_right")
+		and anims.has("run_backwards")
+		and anims.has("reload")
+		and anims.has("reload_move")
+		and anims.has("hit")
+		and anims.has("death")
 	)
-	_assert(has_all, "Player has all 5 retargeted clips: %s" % str(anims))
+	_assert(has_all, "Player has all 12 retargeted Mixamo clips: %s" % str(anims))
+
+	var pre_ms_pos: Vector3 = player.global_position
+	var pre_ms_ammo: int = player.ammo_in_mag
+	player.update_character(0.1, Vector3(1.0, 0.0, 0.0), pre_ms_pos + Vector3(0.0, 0.0, -10.0), true, false, false, "")
+	_assert(
+		player.velocity.length() > 1.0
+		and player.ammo_in_mag == pre_ms_ammo - 1
+		and player.current_action == "shoot"
+		and player.anim_player.current_animation == "strafe_right",
+		"Player moves, shoots, and plays directional strafe_right clip simultaneously"
+	)
+	player.start_reload()
+	player.update_character(0.05, Vector3(0.0, 0.0, -1.0), pre_ms_pos + Vector3(0.0, 0.0, -10.0), false, false, false, "")
+	_assert(player.current_action == "reload" and player.anim_player.current_animation == "reload_move", "Player plays reload_move clip while moving and reloading")
+	player.global_position = pre_ms_pos
+	player.reset_combat_state()
 
 	for act: String in ["walk", "shoot", "interact", "roll"]:
 		player.trigger_preview_action(act)
@@ -446,4 +516,106 @@ func _test_main_scene_player_and_phase2() -> void:
 	_assert(sample_z != null and sample_z.is_stickman, "Stickman Non-Players: Zombies render with articulated 3D Stickman rig")
 	_assert(not world.mission_director.survivor_node.is_empty() and not (world.mission_director.survivor_node.get("stickman", {}) as Dictionary).is_empty(), "Stickman Non-Players: Trapped Survivor renders with articulated 3D Stickman rig")
 
+	# --- 3-Weapon Loadout System Verification (M4A1-S / AK-47 / Desert Eagle) ---
+	player.reset_combat_state()
+	_assert(player.get_weapon_count() == 3, "3-Weapon Loadout: Player initializes with 3 weapons")
+	_assert(player.get_active_weapon_id() == "m4a1s" and player.get_active_weapon_slot() == 0, "3-Weapon Loadout: Default active weapon is Slot 1 (M4A1-S)")
+	var m4_model: Node3D = player.get_weapon_model("m4a1s")
+	var ak_model: Node3D = player.get_weapon_model("ak47")
+	var de_model: Node3D = player.get_weapon_model("deagle")
+	_assert(m4_model != null and ak_model != null and de_model != null, "3-Weapon Loadout: All 3 weapon 3D models mounted on RightHandRifleMount")
+	_assert(m4_model.visible and not ak_model.visible and not de_model.visible, "3-Weapon Loadout: Only M4A1-S 3D model is visible on Slot 1")
+
+	# Spend ammo on M4A1-S and start reload to verify switch cancels reload & preserves independent mag ammo
+	player.ammo_in_mag = 22
+	player.start_reload()
+	_assert(player.is_reloading, "3-Weapon Loadout: M4A1-S reload starts before weapon switch")
+
+	# Switch to Slot 2 (AK-47)
+	_assert(world.switch_player_weapon(1), "3-Weapon Loadout: Switch to Slot 2 (AK-47) succeeds")
+	_assert(
+		player.get_active_weapon_id() == "ak47"
+		and not player.is_reloading
+		and player.mag_size == 30
+		and player.ammo_in_mag == 30
+		and player.bullet_damage > 30.0
+		and not player.toggle_silencer()
+		and player.has_weapon_audio(),
+		"3-Weapon Loadout: AK-47 updates stats/audio, cancels reload, and disables silencer toggle"
+	)
+	_assert(not m4_model.visible and ak_model.visible and not de_model.visible, "3-Weapon Loadout: Only AK-47 3D model is visible on Slot 2")
+	player.ammo_in_mag = 19
+
+	# Switch to Slot 3 (Desert Eagle)
+	_assert(world.switch_player_weapon(2), "3-Weapon Loadout: Switch to Slot 3 (Desert Eagle) succeeds")
+	_assert(
+		player.get_active_weapon_id() == "deagle"
+		and player.mag_size == 7
+		and player.ammo_in_mag == 7
+		and player.bullet_damage >= 60.0
+		and not player.toggle_silencer()
+		and player.has_weapon_audio(),
+		"3-Weapon Loadout: Desert Eagle updates stats (7-rd mag, high damage), audio, and disables silencer toggle"
+	)
+	_assert(not m4_model.visible and not ak_model.visible and de_model.visible, "3-Weapon Loadout: Only Desert Eagle 3D model is visible on Slot 3")
+	player.ammo_in_mag = 4
+
+	# Switch back to Slot 1 (M4A1-S) and Slot 2 (AK-47) and confirm independent mag ammo persisted
+	_assert(world.switch_player_weapon(0) and player.get_active_weapon_id() == "m4a1s" and player.ammo_in_mag == 22, "3-Weapon Loadout: Switching back to Slot 1 preserves M4A1-S ammo (22/30)")
+	_assert(world.switch_player_weapon(1) and player.get_active_weapon_id() == "ak47" and player.ammo_in_mag == 19, "3-Weapon Loadout: Switching back to Slot 2 preserves AK-47 ammo (19/30)")
+	_assert(world.switch_player_weapon(2) and player.get_active_weapon_id() == "deagle" and player.ammo_in_mag == 4, "3-Weapon Loadout: Switching back to Slot 3 preserves Desert Eagle ammo (4/7)")
+
+	# --- Live Character Model Switching Verification ---
+	for acfg: Dictionary in SquadConfig.get_avatar_catalog():
+		var aid: String = str(acfg.get("id", ""))
+		var switched: bool = world.switch_player_avatar(aid)
+		var av_anims: PackedStringArray = player.get_available_animations()
+		var av_m4: Node3D = player.get_weapon_model("m4a1s")
+		var av_ak: Node3D = player.get_weapon_model("ak47")
+		var av_de: Node3D = player.get_weapon_model("deagle")
+		_assert(
+			switched
+			and player.get_active_avatar_id() == aid
+			and player.skeleton != null
+			and player.skeleton.name == "GeneralSkeleton"
+			and av_anims.size() == 12
+			and av_m4 != null and av_ak != null and av_de != null
+			and player.get_active_weapon_slot() == 2
+			and player.get_active_weapon_id() == "deagle"
+			and player.ammo_in_mag == 4
+			and not av_m4.visible and not av_ak.visible and av_de.visible,
+			"Live Avatar Switch '%s': preserves GeneralSkeleton, all 12 Mixamo clips, 3-weapon mounts, and active slot/ammo" % aid
+		)
+	_assert(not player.switch_avatar_model("nonexistent_avatar_id"), "Live Avatar Switch rejects unknown avatar_id cleanly")
+	_assert(world.switch_player_avatar(SquadConfig.DEFAULT_AVATAR_ID), "Live Avatar Switch returns cleanly to default avatar")
+
 	world.queue_free()
+
+	# --- Start Menu & Animation Tuning Sandbox Verification ---
+	var menu_packed: PackedScene = load("res://scenes/StartMenu.tscn") as PackedScene
+	_assert(menu_packed != null, "Start Menu: Load res://scenes/StartMenu.tscn")
+	if menu_packed != null:
+		var menu_node: Node = menu_packed.instantiate()
+		root.add_child(menu_node)
+		var menu: StartMenu = menu_node as StartMenu
+		_assert(menu != null and menu.demo_button != null and menu.sandbox_button != null, "Start Menu: DEMO and Anim Sandbox entry buttons initialized")
+		menu_node.queue_free()
+
+	var sb_packed: PackedScene = load("res://scenes/AnimSandbox.tscn") as PackedScene
+	_assert(sb_packed != null, "Anim Sandbox: Load res://scenes/AnimSandbox.tscn")
+	if sb_packed != null:
+		var sb_node: Node = sb_packed.instantiate()
+		root.add_child(sb_node)
+		var sb: AnimSandboxWorld = sb_node as AnimSandboxWorld
+		_assert(sb != null and sb.player != null and sb.selected_clip == "roll", "Anim Sandbox: Initializes player and defaults to 'roll' clip")
+		sb.set_playback_speed(0.25)
+		_assert(is_equal_approx(sb.playback_speed, 0.25), "Anim Sandbox: Playback speed multiplier sets to 0.25x")
+		sb.set_breakpoints(0.10, 0.65)
+		_assert(is_equal_approx(sb.start_cut_sec, 0.10) and is_equal_approx(sb.end_cut_sec, 0.65), "Anim Sandbox: Start/End animation breakpoints apply cleanly")
+		sb.set_mode(AnimSandboxWorld.SandboxMode.COMBO_WALK_ROLL_WALK)
+		_assert(sb.mode == AnimSandboxWorld.SandboxMode.COMBO_WALK_ROLL_WALK, "Anim Sandbox: Switches to Walk->Roll->Walk combo loop mode")
+		var summary_txt: String = sb.copy_tuning_summary()
+		_assert(summary_txt.contains("Clip=roll") and summary_txt.contains("0.25x"), "Anim Sandbox: Tuning summary exports clip, speed, and breakpoint info")
+		_assert(sb.switch_avatar("aria_idol") and sb.player.get_active_avatar_id() == "aria_idol" and sb.player.skeleton != null and sb.player.skeleton.name == "GeneralSkeleton", "Anim Sandbox: Switches character model to Aria Idol cleanly")
+		_assert(sb.switch_avatar("nangong_yu") and sb.player.get_active_avatar_id() == "nangong_yu" and sb.player.skeleton != null and sb.player.skeleton.name == "GeneralSkeleton", "Anim Sandbox: Switches character model to Nangong Yu cleanly")
+		sb_node.queue_free()

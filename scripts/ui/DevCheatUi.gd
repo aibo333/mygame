@@ -5,6 +5,7 @@ signal cheat_toggled(cheat_id: String, enabled: bool)
 signal clear_zombies_requested()
 signal spawn_demo_fortifications_requested()
 signal grant_resources_requested()
+signal avatar_selected(avatar_id: String)
 
 const CHEAT_ROWS: Array[Dictionary] = [
 	{
@@ -34,6 +35,8 @@ var _panel: PanelContainer = null
 var _is_open: bool = false
 var _toggle_buttons: Dictionary = {}
 var _status_labels: Dictionary = {}
+var _avatar_buttons: Dictionary = {}
+var _active_avatar_id: String = SquadConfig.DEFAULT_AVATAR_ID
 var _states: Dictionary = {
 	"god_mode": false,
 	"infinite_resources": false,
@@ -85,6 +88,15 @@ func sync_states(god_mode: bool, infinite_resources: bool, pause_spawns: bool) -
 		if st_lbl != null:
 			st_lbl.text = "● ON" if active else "○ OFF"
 			st_lbl.add_theme_color_override("font_color", Color(0.38, 1.0, 0.56) if active else Color(0.62, 0.64, 0.68))
+
+
+func sync_active_avatar(avatar_id: String) -> void:
+	_active_avatar_id = avatar_id
+	for aid: String in _avatar_buttons.keys():
+		var btn: Button = _avatar_buttons[aid] as Button
+		if btn != null:
+			var is_active: bool = (aid == avatar_id)
+			btn.modulate = Color(0.45, 0.96, 1.0) if is_active else Color(0.86, 0.86, 0.90)
 
 
 func _make_style(bg: Color, border: Color, radius: int = 10) -> StyleBoxFlat:
@@ -202,6 +214,34 @@ func _build_ui() -> void:
 
 	var sep2: HSeparator = HSeparator.new()
 	vbox.add_child(sep2)
+
+	# Character Model Switcher Row
+	var avatar_hdr: Label = Label.new()
+	avatar_hdr.text = "🎭 即時角色模型切換 (Character Model)"
+	avatar_hdr.add_theme_font_size_override("font_size", 14)
+	avatar_hdr.add_theme_color_override("font_color", Color(0.60, 0.92, 1.0))
+	vbox.add_child(avatar_hdr)
+
+	var avatar_row: HBoxContainer = HBoxContainer.new()
+	avatar_row.add_theme_constant_override("separation", 8)
+	vbox.add_child(avatar_row)
+	_avatar_buttons.clear()
+	for acfg: Dictionary in SquadConfig.get_avatar_catalog():
+		var aid: String = str(acfg.get("id", ""))
+		var abtn: Button = Button.new()
+		abtn.focus_mode = Control.FOCUS_NONE
+		abtn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		abtn.custom_minimum_size = Vector2(0.0, 34.0)
+		abtn.add_theme_font_size_override("font_size", 13)
+		abtn.text = str(acfg.get("label", aid))
+		var cap_aid: String = aid
+		abtn.pressed.connect(func(): avatar_selected.emit(cap_aid))
+		avatar_row.add_child(abtn)
+		_avatar_buttons[aid] = abtn
+	sync_active_avatar(_active_avatar_id)
+
+	var sep3: HSeparator = HSeparator.new()
+	vbox.add_child(sep3)
 
 	# Quick Dev Action Row
 	var util_row: HBoxContainer = HBoxContainer.new()

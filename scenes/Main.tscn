@@ -1,6 +1,6 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://bjphj31befqqx"]
 
-[ext_resource type="Script" path="res://scripts/world/RuinsBaseWorld.gd" id="1_ruins_world"]
+[ext_resource type="Script" uid="uid://cxftyxn1symhb" path="res://scripts/world/RuinsBaseWorld.gd" id="1_ruins_world"]
 
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node3D" unique_id=861403367]
 script = ExtResource("1_ruins_world")
