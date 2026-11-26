@@ -36,6 +36,7 @@ var failed_runs: int = 0
 var total_kills: int = 0
 var selected_tier: int = 1
 var highest_tier_unlocked: int = 1
+var modification_cores: int = 0
 var recruited_crew: Array[Dictionary] = []
 var train_consist_snapshot: Dictionary = {}
 
@@ -47,8 +48,15 @@ func reset_profile() -> void:
 	total_kills = 0
 	selected_tier = 1
 	highest_tier_unlocked = 1
+	modification_cores = 0
 	recruited_crew.clear()
 	train_consist_snapshot.clear()
+
+
+func grant_modification_cores(amount: int) -> int:
+	if amount > 0:
+		modification_cores += amount
+	return modification_cores
 
 
 func get_tier_config(tier_num: int) -> Dictionary:
@@ -133,6 +141,7 @@ func to_dict(consist: TrainConsistManager = null) -> Dictionary:
 		"total_kills": total_kills,
 		"selected_tier": selected_tier,
 		"highest_tier_unlocked": highest_tier_unlocked,
+		"modification_cores": modification_cores,
 		"recruited_crew": recruited_crew.duplicate(true),
 		"train_consist": train_consist_snapshot.duplicate(true),
 	}
@@ -150,6 +159,7 @@ func from_dict(data: Dictionary, consist: TrainConsistManager = null) -> bool:
 	total_kills = int(data.get("total_kills", 0))
 	selected_tier = clampi(int(data.get("selected_tier", 1)), 1, SECTOR_TIERS.size())
 	highest_tier_unlocked = clampi(int(data.get("highest_tier_unlocked", 1)), 1, SECTOR_TIERS.size())
+	modification_cores = maxi(0, int(data.get("modification_cores", 0)))
 
 	recruited_crew.clear()
 	var rc_raw: Variant = data.get("recruited_crew", [])

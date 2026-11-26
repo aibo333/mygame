@@ -30,42 +30,22 @@ func close() -> void:
 		_backdrop.visible = false
 
 
-func _make_style(bg: Color, border: Color, radius: int = 8, border_w: int = 2) -> StyleBoxFlat:
-	var sb: StyleBoxFlat = StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(border_w)
-	sb.set_corner_radius_all(radius)
-	sb.content_margin_left = 16
-	sb.content_margin_right = 16
-	sb.content_margin_top = 12
-	sb.content_margin_bottom = 12
-	return sb
-
-
-func _style_cta(btn: Button) -> void:
-	btn.add_theme_stylebox_override("normal", _make_style(Color(0.72, 0.36, 0.13, 0.98), Color(0.96, 0.78, 0.42, 0.98), 8, 2))
-	btn.add_theme_stylebox_override("hover", _make_style(Color(0.84, 0.45, 0.18, 1.0), Color(1.0, 0.86, 0.52, 1.0), 8, 2))
-
-
 func _build_shell() -> void:
 	_backdrop = ColorRect.new()
 	_backdrop.name = "RunFlowBackdrop"
 	_backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_backdrop.color = Color(0.14, 0.10, 0.07, 0.86)
+	_backdrop.color = TacticalTheme.BG_BACKDROP
 	_backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
-	var theme: Theme = Theme.new()
-	theme.default_font_size = 17
-	_backdrop.theme = theme
+	_backdrop.theme = TacticalTheme.build_theme(15)
 	add_child(_backdrop)
 
 	var frame: PanelContainer = PanelContainer.new()
 	frame.set_anchors_preset(Control.PRESET_CENTER)
-	frame.offset_left = -460.0
-	frame.offset_top = -330.0
-	frame.offset_right = 460.0
-	frame.offset_bottom = 330.0
-	frame.add_theme_stylebox_override("panel", _make_style(Color(0.22, 0.17, 0.13, 0.98), Color(0.84, 0.68, 0.38, 0.98), 12, 3))
+	frame.offset_left = -470.0
+	frame.offset_top = -340.0
+	frame.offset_right = 470.0
+	frame.offset_bottom = 340.0
+	frame.add_theme_stylebox_override("panel", TacticalTheme.make_accent_card_style(TacticalTheme.BG_PANEL_DEEP, TacticalTheme.ACCENT_CYAN, 3, 22, 18))
 	_backdrop.add_child(frame)
 
 	var scroll: ScrollContainer = ScrollContainer.new()
@@ -90,16 +70,16 @@ func show_hub(meta: MetaProgressionManager, consist: TrainConsistManager, curren
 	_selected_tier = meta.selected_tier
 	_pending_seed = current_seed
 
-	var title: Label = Label.new()
-	title.text = "🚂 裝甲列車整備基地 — 局外大廳與區域出擊選擇"
-	title.add_theme_font_size_override("font_size", 24)
-	title.add_theme_color_override("font_color", Color(1.0, 0.91, 0.72))
-	_content_vbox.add_child(title)
+	_content_vbox.add_child(TacticalTheme.make_section_header("CMD-HUB", "裝甲列車指揮終端 // SECTOR DEPLOYMENT", TacticalTheme.ACCENT_CYAN, 20))
 
 	var wh: Dictionary = meta.warehouse
 	var stats: Dictionary = consist.compute_stats()
+	var summary_card := PanelContainer.new()
+	summary_card.add_theme_stylebox_override("panel", TacticalTheme.make_panel_style(TacticalTheme.BG_CARD, TacticalTheme.BORDER_STEEL, 1, 14, 10, 1))
+	_content_vbox.add_child(summary_card)
+
 	var summary: Label = Label.new()
-	summary.text = "📦 基地總倉：廢金屬 %d ｜ 機械零件 %d ｜ 高能燃料 %d ｜ 醫療補給 %d\n🏆 生涯紀錄：成功撤離 %d 局 ｜ 失敗 %d 局 ｜ 累計擊殺 %d 喪屍 ｜ 編成 %d/%d 節（砲塔 %d 座）" % [
+	summary.text = "WAREHOUSE  //  SCRAP %d  |  PARTS %d  |  FUEL %d  |  SUPPLIES %d\nRECORD     //  EXTRACTED %d  |  FAILED %d  |  KILLS %d  |  TRAIN %d/%d CARS (TURRETS %d)" % [
 		int(wh.get("scrap", 0)),
 		int(wh.get("parts", 0)),
 		int(wh.get("fuel", 0)),
@@ -111,14 +91,14 @@ func show_hub(meta: MetaProgressionManager, consist: TrainConsistManager, curren
 		int(stats.get("max_carriages", 3)),
 		int(stats.get("turret_count", 1)),
 	]
-	summary.add_theme_font_size_override("font_size", 16)
-	summary.add_theme_color_override("font_color", Color(0.95, 0.89, 0.78))
-	_content_vbox.add_child(summary)
+	summary.add_theme_font_size_override("font_size", 14)
+	summary.add_theme_color_override("font_color", TacticalTheme.TEXT_SECONDARY)
+	summary_card.add_child(summary)
 
 	var tier_hdr: Label = Label.new()
-	tier_hdr.text = "🗺 選擇下一局出擊區域難度（Sector Tier）："
-	tier_hdr.add_theme_font_size_override("font_size", 18)
-	tier_hdr.add_theme_color_override("font_color", Color(1.0, 0.86, 0.52))
+	tier_hdr.text = "// SELECT TARGET SECTOR TIER (選擇區域威脅等級)"
+	tier_hdr.add_theme_font_size_override("font_size", 13)
+	tier_hdr.add_theme_color_override("font_color", TacticalTheme.ACCENT_AMBER)
 	_content_vbox.add_child(tier_hdr)
 
 	for tcfg: Dictionary in MetaProgressionManager.SECTOR_TIERS:
@@ -127,12 +107,10 @@ func show_hub(meta: MetaProgressionManager, consist: TrainConsistManager, curren
 		var is_sel: bool = (_selected_tier == tnum)
 
 		var card: PanelContainer = PanelContainer.new()
-		card.add_theme_stylebox_override("panel", _make_style(
-			Color(0.30, 0.22, 0.15, 0.98) if is_sel else Color(0.18, 0.14, 0.11, 0.94),
-			Color(1.0, 0.84, 0.36) if is_sel else Color(0.52, 0.42, 0.30),
-			8,
-			2 if is_sel else 1
-		))
+		if is_sel:
+			card.add_theme_stylebox_override("panel", TacticalTheme.make_accent_card_style(TacticalTheme.BG_CARD_ACTIVE, TacticalTheme.ACCENT_AMBER, 4, 14, 10))
+		else:
+			card.add_theme_stylebox_override("panel", TacticalTheme.make_panel_style(TacticalTheme.BG_CARD, TacticalTheme.BORDER_STEEL if unlocked else Color(0.16, 0.19, 0.24, 0.65), 1, 14, 10, 1))
 		_content_vbox.add_child(card)
 
 		var row: HBoxContainer = HBoxContainer.new()
@@ -144,21 +122,21 @@ func show_hub(meta: MetaProgressionManager, consist: TrainConsistManager, curren
 		row.add_child(info)
 
 		var nlbl: Label = Label.new()
-		nlbl.text = "%s%s" % [str(tcfg.get("name", "")), "" if unlocked else " 🔒（尚未解鎖）"]
-		nlbl.add_theme_font_size_override("font_size", 18)
-		nlbl.add_theme_color_override("font_color", Color(1.0, 0.92, 0.74) if unlocked else Color(0.62, 0.58, 0.52))
+		nlbl.text = "%s%s" % [str(tcfg.get("name", "")), "" if unlocked else "  [LOCKED]"]
+		nlbl.add_theme_font_size_override("font_size", 16)
+		nlbl.add_theme_color_override("font_color", TacticalTheme.ACCENT_AMBER if is_sel else (TacticalTheme.TEXT_PRIMARY if unlocked else TacticalTheme.TEXT_MUTED))
 		info.add_child(nlbl)
 
 		var dlbl: Label = Label.new()
 		dlbl.text = str(tcfg.get("desc", ""))
 		dlbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		dlbl.add_theme_font_size_override("font_size", 15)
-		dlbl.add_theme_color_override("font_color", Color(0.86, 0.80, 0.70))
+		dlbl.add_theme_font_size_override("font_size", 13)
+		dlbl.add_theme_color_override("font_color", TacticalTheme.TEXT_SECONDARY)
 		info.add_child(dlbl)
 
 		var sel_btn: Button = Button.new()
-		sel_btn.custom_minimum_size = Vector2(126.0, 48.0)
-		sel_btn.text = "已選擇" if is_sel else ("選擇區域" if unlocked else "未解鎖")
+		sel_btn.custom_minimum_size = Vector2(128.0, 44.0)
+		sel_btn.text = "SELECTED" if is_sel else ("SELECT" if unlocked else "LOCKED")
 		sel_btn.disabled = (not unlocked) or is_sel
 		var cap_t: int = tnum
 		sel_btn.pressed.connect(func():
@@ -167,14 +145,16 @@ func show_hub(meta: MetaProgressionManager, consist: TrainConsistManager, curren
 		)
 		row.add_child(sel_btn)
 
+	_content_vbox.add_child(HSeparator.new())
+
 	# Bottom action bar
 	var actions: HBoxContainer = HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 12)
+	actions.add_theme_constant_override("separation", 10)
 	_content_vbox.add_child(actions)
 
 	var bp_btn: Button = Button.new()
-	bp_btn.text = "🚂 蒸氣列車設計圖 [T]"
-	bp_btn.custom_minimum_size = Vector2(0.0, 52.0)
+	bp_btn.text = "[T] 列車改裝藍圖"
+	bp_btn.custom_minimum_size = Vector2(0.0, 46.0)
 	bp_btn.pressed.connect(func():
 		close()
 		open_train_blueprint_requested.emit()
@@ -182,22 +162,22 @@ func show_hub(meta: MetaProgressionManager, consist: TrainConsistManager, curren
 	actions.add_child(bp_btn)
 
 	var save_btn: Button = Button.new()
-	save_btn.text = "💾 存檔"
-	save_btn.custom_minimum_size = Vector2(0.0, 52.0)
+	save_btn.text = "SAVE // 存檔"
+	save_btn.custom_minimum_size = Vector2(0.0, 46.0)
 	save_btn.pressed.connect(func(): save_profile_requested.emit())
 	actions.add_child(save_btn)
 
 	var reset_btn: Button = Button.new()
-	reset_btn.text = "🔄 重置存檔"
-	reset_btn.custom_minimum_size = Vector2(0.0, 52.0)
+	reset_btn.text = "RESET // 重置"
+	reset_btn.custom_minimum_size = Vector2(0.0, 46.0)
 	reset_btn.pressed.connect(func(): reset_profile_requested.emit())
 	actions.add_child(reset_btn)
 
 	var go_btn: Button = Button.new()
-	go_btn.text = "🚀 發車進站・開始出擊"
+	go_btn.text = "DEPLOY // 發車進站出擊"
 	go_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	go_btn.custom_minimum_size = Vector2(0.0, 54.0)
-	_style_cta(go_btn)
+	go_btn.custom_minimum_size = Vector2(0.0, 48.0)
+	TacticalTheme.style_cta_button(go_btn, TacticalTheme.ACCENT_AMBER)
 	go_btn.pressed.connect(func():
 		var next_seed: int = int(Time.get_ticks_usec() % 899999) + 100000
 		close()
@@ -206,8 +186,8 @@ func show_hub(meta: MetaProgressionManager, consist: TrainConsistManager, curren
 	actions.add_child(go_btn)
 
 	var resume_btn: Button = Button.new()
-	resume_btn.text = "返回目前戰局 [H]"
-	resume_btn.custom_minimum_size = Vector2(0.0, 52.0)
+	resume_btn.text = "RESUME [H]"
+	resume_btn.custom_minimum_size = Vector2(0.0, 46.0)
 	resume_btn.pressed.connect(func(): close())
 	actions.add_child(resume_btn)
 
@@ -218,11 +198,10 @@ func show_settlement(settlement: Dictionary) -> void:
 	_backdrop.visible = true
 
 	var victory: bool = bool(settlement.get("victory", false))
-	var title: Label = Label.new()
-	title.text = "🏆 撤離成功！裝甲列車安全離站" if victory else "💀 單局撤離失敗 — %s" % str(settlement.get("fail_reason", "行動中止"))
-	title.add_theme_font_size_override("font_size", 25)
-	title.add_theme_color_override("font_color", Color(0.54, 0.98, 0.68) if victory else Color(1.0, 0.46, 0.38))
-	_content_vbox.add_child(title)
+	var tag: String = "EXTRACTED" if victory else "MIA / ABORTED"
+	var accent: Color = TacticalTheme.ACCENT_EMERALD if victory else TacticalTheme.ACCENT_CRIMSON
+	var title_txt: String = "撤離成功 // 裝甲列車安全離站" if victory else "撤離失敗 // %s" % str(settlement.get("fail_reason", "行動中止"))
+	_content_vbox.add_child(TacticalTheme.make_section_header(tag, title_txt, accent, 21))
 
 	var secured: Dictionary = settlement.get("secured_resources", {}) as Dictionary
 	var lost: Dictionary = settlement.get("lost_resources", {}) as Dictionary
@@ -230,15 +209,19 @@ func show_settlement(settlement: Dictionary) -> void:
 	var mission_name: String = str(settlement.get("mission_title", ""))
 	var mission_done: bool = bool(settlement.get("mission_complete", false))
 
+	var report_card := PanelContainer.new()
+	report_card.add_theme_stylebox_override("panel", TacticalTheme.make_panel_style(TacticalTheme.BG_CARD, TacticalTheme.BORDER_STEEL, 1, 16, 14, 1))
+	_content_vbox.add_child(report_card)
+
 	var body: Label = Label.new()
 	body.text = (
-		"🎯 單局主線【%s】：%s\n"
-		+ "🧟 本局擊殺喪屍：%d 隻\n"
-		+ "📦 安全入庫總資源：廢金屬 +%d ｜ 機械零件 +%d ｜ 高能燃料 +%d ｜ 醫療補給 +%d\n"
-		+ "🎒 遺失隨身背包物資：廢金屬 %d ｜ 機械零件 %d ｜ 高能燃料 %d ｜ 醫療補給 %d"
+		"OBJECTIVE [%s] : %s\n"
+		+ "HOSTILES ELIMINATED : %d\n"
+		+ "SECURED STASH       : SCRAP +%d  |  PARTS +%d  |  FUEL +%d  |  SUPPLIES +%d\n"
+		+ "LOST BACKPACK       : SCRAP %d  |  PARTS %d  |  FUEL %d  |  SUPPLIES %d"
 	) % [
 		mission_name,
-		"已完成（含主線獎勵）" if mission_done else "未完成",
+		"COMPLETED (+BONUS)" if mission_done else "INCOMPLETE",
 		kills,
 		int(secured.get("scrap", 0)),
 		int(secured.get("parts", 0)),
@@ -249,33 +232,37 @@ func show_settlement(settlement: Dictionary) -> void:
 		int(lost.get("fuel", 0)),
 		int(lost.get("supplies", 0)),
 	]
-	body.add_theme_font_size_override("font_size", 17)
-	body.add_theme_color_override("font_color", Color(0.96, 0.92, 0.82))
-	_content_vbox.add_child(body)
+	body.add_theme_font_size_override("font_size", 15)
+	body.add_theme_color_override("font_color", TacticalTheme.TEXT_PRIMARY)
+	report_card.add_child(body)
 
 	var rescued_raw: Variant = settlement.get("rescued_crew", {})
 	if victory and rescued_raw is Dictionary and not (rescued_raw as Dictionary).is_empty():
 		var rc: Dictionary = rescued_raw as Dictionary
+		var crew_card := PanelContainer.new()
+		crew_card.add_theme_stylebox_override("panel", TacticalTheme.make_accent_card_style(TacticalTheme.BG_CARD_ACTIVE, TacticalTheme.ACCENT_AMBER, 3, 14, 10))
+		_content_vbox.add_child(crew_card)
+
 		var crew_lbl: Label = Label.new()
-		crew_lbl.text = "✨ 新乘員永久加入名冊：%s（%s）— %s" % [
+		crew_lbl.text = "NEW OPERATOR RECRUITED // %s (%s) — %s" % [
 			str(rc.get("name", "")),
 			str(rc.get("role", "")),
 			str(rc.get("trait", "")),
 		]
-		crew_lbl.add_theme_font_size_override("font_size", 18)
-		crew_lbl.add_theme_color_override("font_color", Color(1.0, 0.88, 0.44))
-		_content_vbox.add_child(crew_lbl)
+		crew_lbl.add_theme_font_size_override("font_size", 15)
+		crew_lbl.add_theme_color_override("font_color", TacticalTheme.ACCENT_AMBER)
+		crew_card.add_child(crew_lbl)
 
 	var note: Label = Label.new()
-	note.text = "（已自動將入庫資源與進度儲存至本機存檔 user://mygame_save.json）"
-	note.add_theme_font_size_override("font_size", 15)
-	note.add_theme_color_override("font_color", Color(0.76, 0.72, 0.64))
+	note.text = "SYS // PROFILE AUTO-SAVED TO user://mygame_save.json"
+	note.add_theme_font_size_override("font_size", 12)
+	note.add_theme_color_override("font_color", TacticalTheme.TEXT_MUTED)
 	_content_vbox.add_child(note)
 
 	var hub_btn: Button = Button.new()
-	hub_btn.text = "🚂 返回列車整備基地（改造列車 / 選擇下一局區域）"
-	hub_btn.custom_minimum_size = Vector2(0.0, 56.0)
-	_style_cta(hub_btn)
+	hub_btn.text = "RETURN TO COMMAND HUB // 返回整備基地"
+	hub_btn.custom_minimum_size = Vector2(0.0, 50.0)
+	TacticalTheme.style_cta_button(hub_btn, TacticalTheme.ACCENT_CYAN)
 	hub_btn.pressed.connect(func():
 		close()
 		return_to_hub_requested.emit()

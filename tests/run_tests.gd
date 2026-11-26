@@ -186,6 +186,242 @@ func _test_main_scene_player_and_phase2() -> void:
 			break
 	_assert(found_diff, "Phase 2: Different seeds produce varied Sector block/road layouts")
 
+	# --- Milestone 1 Verification: CDDA 5-Step Civil-Defense Houses & Through-Running Railway ---
+	var sec_cdda: Dictionary = world.generate_new_sector(424242, true)
+	var houses: Array = sec_cdda.get("civil_houses", []) as Array
+	_assert(houses.size() >= 4, "Milestone 1 (CDDA): Generates >= 4 modular civil-defense houses (got %d)" % houses.size())
+	var first_house: Dictionary = houses[0] as Dictionary
+	var h_fp: Rect2 = first_house.get("footprint", Rect2()) as Rect2
+	var h_lot: Rect2 = first_house.get("lot_footprint", Rect2()) as Rect2
+	var h_roof: Node3D = first_house.get("roof_node", null) as Node3D
+	var h_node: Node3D = first_house.get("node", null) as Node3D
+	var h_sockets: Array = first_house.get("loot_sockets", []) as Array
+	var h_dir: String = str(first_house.get("facing_dir", ""))
+	var h_reach: int = int(first_house.get("reachable_indoor", 0))
+	var h_total: int = int(first_house.get("total_indoor_open", 0))
+	_assert(h_lot.size.x >= 25.0 and h_fp.size.x >= 12.0 and h_fp.size.y >= 10.0 and ["N", "S", "W", "E"].has(h_dir), "Milestone 1 (CDDA): Spacious 24x24 house footprint & OMT face-road valid (%.1fx%.1fm, %s)" % [h_fp.size.x, h_fp.size.y, h_dir])
+	_assert(h_total > 20 and h_reach == h_total, "Milestone 1 (CDDA Walkability): 100%% of indoor rooms reachable from street (%d/%d tiles)" % [h_reach, h_total])
+	_assert(h_sockets.size() >= 3, "Milestone 1 (CDDA): House Nested Room Blocks expose >= 3 indoor loot sockets (got %d)" % h_sockets.size())
+	_assert(ResourceLoader.exists("res://assets/shaders/character_silhouette.gdshader"), "Milestone 1 (Occlusion Silhouette): Character occlusion silhouette shader exists")
+
+	var has_decal: bool = false
+	if h_node != null:
+		for child in h_node.get_children():
+			if child is Decal:
+				has_decal = true
+				break
+	_assert(has_decal, "Milestone 1 (CDDA Ruins Filter): House floor includes projected Decal weathering")
+	_assert(ResourceLoader.exists(CddaHouseBuilder.WEATHERED_SHADER_PATH), "Milestone 1 (CDDA Shader): World-Space Noise weathering shader exists")
+
+	var house_center := Vector3(h_fp.position.x + h_fp.size.x * 0.5, 0.0, h_fp.position.y + h_fp.size.y * 0.5)
+	var cut_in: int = world.sector_generator.update_house_cutaways(house_center)
+	_assert(cut_in >= 1 and h_roof != null and not h_roof.visible, "Milestone 1 (RoofCutaway): Entering house hides RoofCutaway node")
+	var cut_out: int = world.sector_generator.update_house_cutaways(Vector3(0.0, 0.0, world.sector_generator.rail_z + 4.6))
+	_assert(cut_out == 0 and h_roof != null and h_roof.visible, "Milestone 1 (RoofCutaway): Exiting house restores RoofCutaway visibility")
+
+	var rz: float = world.sector_generator.rail_z
+	_assert(rz > world.sector_generator.world_bounds.position.y + 8.0 and rz < world.sector_generator.world_bounds.end.y - 8.0, "Milestone 1 (Railway): Through-running central railway sits between North and South districts (z=%.1f)" % rz)
+
+	# --- Milestone 2 Verification: Day/Night Cycle, Night Cones & Daytime Rail Driving ---
+	var dn: DayNightCycleManager = world.day_night_manager
+	_assert(dn != null and dn.current_day == 1 and dn.current_phase == DayNightCycleManager.Phase.DAY, "Milestone 2 (Clock): Starts on Day 1 DAY")
+	_assert(dn.is_train_mobile() and not dn.is_night_lights_active(), "Milestone 2 (Clock): Train mobile & night lights off during DAY")
+
+	dn.update_cycle(DayNightCycleManager.DAY_DURATION + 0.1)
+	_assert(dn.current_phase == DayNightCycleManager.Phase.DUSK and not dn.is_train_mobile() and dn.is_night_lights_active(), "Milestone 2 (Clock): Transitions DAY -> DUSK and locks train mobility")
+	dn.update_cycle(DayNightCycleManager.DUSK_DURATION + 0.1)
+	_assert(dn.current_phase == DayNightCycleManager.Phase.NIGHT and dn.is_night_lights_active(), "Milestone 2 (Clock): Transitions DUSK -> NIGHT")
+	dn.update_cycle(DayNightCycleManager.NIGHT_DURATION + 0.1)
+	_assert(dn.current_phase == DayNightCycleManager.Phase.DAY and dn.current_day == 2, "Milestone 2 (Clock): Transitions NIGHT -> Day 2 DAY")
+
+	dn.schedule_blood_moon(true)
+	dn.force_phase(DayNightCycleManager.Phase.DUSK, 2, DayNightCycleManager.DUSK_DURATION - 0.1)
+	dn.update_cycle(0.2)
+	_assert(dn.current_phase == DayNightCycleManager.Phase.BLOOD_MOON and dn.is_blood_moon(), "Milestone 2 (Blood Moon): Scheduled Blood Moon triggers on dusk-to-night transition")
+
+	# Night lighting + tactical flashlight + locomotive SpotLight3D cone
+	var player_m2: SquadCharacter = world.get_active_character()
+	var train_m2: ArmoredTrainBase = world.armored_train
+	dn.force_phase(DayNightCycleManager.Phase.NIGHT, 2, 0.0)
+	world._physics_process(0.05)
+	_assert(world._sun_light != null and world._sun_light.light_energy < 0.5, "Milestone 2 (Lighting): Night phase dims directional sun energy (%.2f)" % (world._sun_light.light_energy if world._sun_light else -1.0))
+	_assert(player_m2.flashlight_light != null and player_m2.flashlight_light.visible, "Milestone 2 (Flashlight): Player tactical SpotLight3D auto-enables at NIGHT")
+	_assert(train_m2._headlamp_spot != null and train_m2._headlamp_spot.visible, "Milestone 2 (Train Light): Locomotive searchlight SpotLight3D auto-enables at NIGHT")
+	var fl_after_toggle: bool = player_m2.toggle_flashlight()
+	_assert(not fl_after_toggle and not player_m2.flashlight_light.visible, "Milestone 2 (Flashlight): Manual [L] toggle turns flashlight off")
+	player_m2.reset_flashlight_auto()
+
+	# Night mobility lock check
+	var x_before_night_drive: float = train_m2.position.x
+	world._on_train_drive_requested(-1)
+	world._physics_process(0.4)
+	_assert(train_m2.rail_throttle == 0 and is_equal_approx(train_m2.position.x, x_before_night_drive), "Milestone 2 (Night Lock): Train refuses movement during NIGHT")
+
+	# Clock below minimap + Boiler room [F] helm console gating
+	var minimap_node: Control = world.hud._minimap
+	var clock_card: Control = world.hud.find_child("WorldClockCard", true, false) as Control
+	_assert(clock_card != null and minimap_node != null and clock_card.get_parent() == minimap_node.get_parent(), "Milestone 2 (HUD Clock): Clock card placed in same right-side panel as Minimap")
+	_assert(clock_card.get_index() > minimap_node.get_index(), "Milestone 2 (HUD Clock): Clock card sits directly below MinimapWidget")
+	_assert(world.train_helm_ui != null and not world.train_helm_ui.is_open(), "Milestone 2 (Helm Gate): TrainHelmUi starts closed")
+	player_m2.global_position = Vector3(0.0, 0.0, train_m2.position.z + 6.5)
+	_assert(not world._try_open_train_helm() and not world.train_helm_ui.is_open(), "Milestone 2 (Helm Gate): Cannot open TrainHelmUi from outside boiler room")
+
+	# Daytime bidirectional movement + stationary tracks + passenger carry + bounds clamp
+	dn.force_phase(DayNightCycleManager.Phase.DAY, 3, 0.0)
+	world._physics_process(0.05)
+	_assert(not player_m2.flashlight_light.visible and not train_m2._headlamp_spot.visible, "Milestone 2 (Lighting): Returning to DAY turns off night spotlights")
+	player_m2.global_position = train_m2.get_helm_world_pos()
+	_assert(train_m2.is_point_inside_train(player_m2.global_position) and train_m2.is_player_at_helm_console(player_m2.global_position), "Milestone 2 (Helm Gate): Player positioned at boiler room throttle console")
+	var helm_near: Dictionary = world._find_nearest_interaction(player_m2.global_position)
+	_assert(str(helm_near.get("kind", "")) == "train_helm", "Milestone 2 (Helm Gate): Nearest interaction at console is train_helm")
+	world._try_begin_stratagem_interaction()
+	_assert(world.train_helm_ui.is_open(), "Milestone 2 (Helm Gate): Pressing [F] at boiler console opens TrainHelmUi")
+
+	var start_tx: float = train_m2.position.x
+	var start_px: float = player_m2.global_position.x
+	world.train_helm_ui.drive_requested.emit(-1)
+	for _s: int in range(10):
+		world._physics_process(0.05)
+	var moved_west: float = train_m2.position.x - start_tx
+	_assert(moved_west < -1.5, "Milestone 2 (Day Drive): Train drives West (-X) from Helm Console during DAY (dx=%.2f)" % moved_west)
+	_assert(is_equal_approx(train_m2._tracks_root.position.x, -train_m2.position.x), "Milestone 2 (Tracks): Railway tracks stay anchored in world space")
+	_assert(absf((player_m2.global_position.x - start_px) - moved_west) < 0.35, "Milestone 2 (Passenger): Riding player shifts along X with moving train")
+
+	world.train_helm_ui.drive_requested.emit(1)
+	var mid_tx: float = train_m2.position.x
+	for _s2: int in range(15):
+		world._physics_process(0.05)
+	_assert(train_m2.position.x > mid_tx + 2.0, "Milestone 2 (Day Drive): Train drives East (+X) when throttle=+1")
+	world.train_helm_ui.drive_requested.emit(0)
+	world.train_helm_ui.set_open(false)
+	_assert(not world.train_helm_ui.is_open() and train_m2.rail_throttle == 0, "Milestone 2 (Helm Gate): Exiting console closes TrainHelmUi cleanly")
+
+	# Bounds clamp test
+	for _s3: int in range(40):
+		train_m2.drive_along_rail(0.25, world.sector_generator.world_bounds.position.x, world.sector_generator.world_bounds.end.x, 1)
+	var half_l: float = train_m2.get_train_half_length()
+	_assert(train_m2.position.x <= world.sector_generator.world_bounds.end.x - half_l + 0.01, "Milestone 2 (Bounds): Train position clamps cleanly inside Sector world_bounds")
+
+	# Restore clean Day 1 docked sector state for Phase 2-5 assertions
+	world.generate_new_sector(424242, true)
+
+	# --- Milestone 3 Verification: Dual-Layer Zombie AI & Blood Moon Dual-Track ---
+	var hm3: HordeManager = world.horde_manager
+	var dn3: DayNightCycleManager = world.day_night_manager
+	var roamers: Array[ZombieUnit] = hm3.get_active_zombies()
+	var indoor_roamer_found: bool = false
+	var any_roamer_found: bool = false
+	for roam_z: ZombieUnit in roamers:
+		if roam_z.behavior_mode == ZombieUnit.BehaviorMode.ROAMER:
+			any_roamer_found = true
+			if roam_z.is_indoor_spawn:
+				indoor_roamer_found = true
+	_assert(any_roamer_found and indoor_roamer_found, "Milestone 3 (Day Roamers): Daytime sector spawns both outdoor & indoor house roamers")
+
+	# Sight/Noise separation test: silenced shot at 14m doesn't alert, loud shot at 14m alerts!
+	hm3.clear_all_zombies()
+	var test_roamer: ZombieUnit = hm3.spawn_zombie("walker", Vector3(14.0, 0.0, 14.0))
+	test_roamer.setup_roamer(Vector3(14.0, 0.0, 14.0), true)
+	var alerted_sup: int = hm3.emit_gunshot_noise(Vector3(0.0, 0.0, 14.0), 7.5)
+	_assert(alerted_sup == 0 and test_roamer.alert_state == ZombieUnit.AlertState.IDLE_PATROL, "Milestone 3 (Noise Circle): Suppressed gunshot (7.5m) does not alert roamer at 14m")
+	var alerted_loud: int = hm3.emit_gunshot_noise(Vector3(0.0, 0.0, 14.0), 22.0)
+	_assert(alerted_loud == 1 and test_roamer.alert_state == ZombieUnit.AlertState.INVESTIGATE_NOISE, "Milestone 3 (Noise Circle): Unsuppressed gunshot (22m) alerts indoor roamer to investigate")
+
+	# Night Siege Train Tracking + Multi-Day Scaling
+	var day1_hp_mult: float = hm3.get_day_hp_multiplier()
+	world.armored_train.set_rail_x(-12.0)
+	var siege_target: Vector3 = world.armored_train.get_nearest_perimeter_world_pos(Vector3(-12.0, 0.0, 15.0))
+	_assert(absf(siege_target.x - (-12.0)) <= 1.0, "Milestone 3 (Train Siege Anchor): Night siege perimeter locks onto relocated train X (-12.0)")
+	dn3.force_phase(DayNightCycleManager.Phase.NIGHT, 3, 0.0)
+	world._physics_process(0.05)
+	_assert(test_roamer.behavior_mode == ZombieUnit.BehaviorMode.SIEGE, "Milestone 3 (Night Switch): Nightfall flips active roamers into SIEGE mode")
+	_assert(hm3.get_day_hp_multiplier() > day1_hp_mult, "Milestone 3 (Day Scaling): Multi-day stay scales zombie HP multiplier (Day3=%.2f > Day1=%.2f)" % [hm3.get_day_hp_multiplier(), day1_hp_mult])
+
+	# Blood Moon Dual-Track (Time + Action + Random Event) + Dusk Warning + Elite Drop
+	dn3.reset(424242)
+	var bm_start: float = dn3.blood_moon_value
+	dn3.update_cycle(10.0)
+	_assert(dn3.blood_moon_value > bm_start, "Milestone 3 (Blood Moon Time): Time accumulation raises Blood Moon gauge")
+	var bm_after_time: float = dn3.blood_moon_value
+	dn3.add_blood_moon_pressure(25.0, "test_loud")
+	dn3.trigger_blood_moon_event(-5.0, "Test Cold Front")
+	_assert(is_equal_approx(dn3.blood_moon_value, bm_after_time + 20.0), "Milestone 3 (Blood Moon Dual-Track): Action pressure & random anomaly events modify Blood Moon gauge")
+	dn3.add_blood_moon_pressure(90.0, "threshold")
+	_assert(dn3.blood_moon_value >= 100.0 and dn3.is_blood_moon_warning(), "Milestone 3 (Dusk Warning): Reaching 100%% Blood Moon triggers Dusk pre-warning")
+	dn3.force_phase(DayNightCycleManager.Phase.DUSK, 1, DayNightCycleManager.DUSK_DURATION - 0.1)
+	dn3.update_cycle(0.2)
+	_assert(dn3.current_phase == DayNightCycleManager.Phase.BLOOD_MOON and is_equal_approx(dn3.blood_moon_value, 0.0), "Milestone 3 (Blood Moon Trigger): Dusk with full gauge enters BLOOD_MOON and resets gauge")
+	world._sync_hud_state()
+	_assert(world.hud._blood_moon_bar != null and is_equal_approx(world.hud._blood_moon_bar.value, 100.0), "Milestone 3 (HUD Gauge): Minimap clock Blood Moon bar displays active Blood Moon")
+
+	var cores_before: int = world.meta_progression.modification_cores
+	var parts_before: int = int(world.loot_stash_manager.backpack.get("parts", 0)) + int(world.loot_stash_manager.train_stash.get("parts", 0))
+	var elite_z: ZombieUnit = hm3.spawn_zombie("blood_elite", Vector3(6.0, 0.0, 6.0))
+	_assert(elite_z != null and elite_z.is_elite, "Milestone 3 (Blood Elite): Spawns blood_elite archetype")
+	elite_z.apply_damage(9999.0)
+	var parts_after: int = int(world.loot_stash_manager.backpack.get("parts", 0)) + int(world.loot_stash_manager.train_stash.get("parts", 0))
+	_assert(world.meta_progression.modification_cores == cores_before + 1 and parts_after >= parts_before + 2, "Milestone 3 (Elite Loot): Killing Blood Moon Elite grants +1 modification core & rare parts")
+
+	# Restore clean Day 1 docked sector state for Phase 2-5 assertions
+	world.meta_progression.modification_cores = cores_before
+	world.generate_new_sector(424242, true)
+
+	# --- Milestone 4 Verification: Holdout Facility, Cross-Sector Expedition & Expanded Maintenance ---
+	var em4: ExpeditionManager = world.expedition_manager
+	_assert(em4 != null and em4.sector_index == 1 and not em4.rail_barricade_cleared, "Milestone 4 (Expedition): Starts in Sector #1 with Railway Blockade active")
+	_assert(absf(em4.facility_pos.x) <= 16.0, "Milestone 4 (Facility Placement): Sector #1 places Holdout Facility directly beside starting train yard (x=%.1f)" % em4.facility_pos.x)
+	world.armored_train.set_rail_x(26.0)
+	em4.update_train_coupling(world.armored_train)
+	_assert(not em4.facility_powered, "Milestone 4 (Facility Power): Holdout facility is unpowered when train drives far away")
+	world.armored_train.set_rail_x(0.0)
+	world._physics_process(0.05)
+	_assert(em4.facility_powered, "Milestone 4 (Facility Power): Parking locomotive beside facility couples power immediately")
+
+	var stash_parts_0: int = int(world.loot_stash_manager.train_stash.get("parts", 0))
+	var cores_0: int = world.meta_progression.modification_cores
+	world.dev_cheat_ui.next_day_requested.emit()
+	var stash_parts_1: int = int(world.loot_stash_manager.train_stash.get("parts", 0))
+	world.dev_cheat_ui.next_day_requested.emit()
+	var stash_parts_2: int = int(world.loot_stash_manager.train_stash.get("parts", 0))
+	_assert(stash_parts_1 - stash_parts_0 == 3 and stash_parts_2 - stash_parts_1 == 5, "Milestone 4 (Stepped Yield): Cheat DAY+1 triggers powered stepped yield (+3 Day1, +5 Day2)")
+	_assert(em4.consecutive_powered_days == 2 and em4._facility_label.text.contains("連續 2 日"), "Milestone 4 (Facility Label): 3D Label updates live to consecutive powered days (2)")
+	_assert(world.meta_progression.modification_cores == cores_0 + 1, "Milestone 4 (Stepped Yield): Day 2 powered facility rewards +1 modification core")
+
+	# Expanded fortifications: searchlight SpotLight3D + house window boarding + multi-resource dismantle
+	var bm4: BuildDefenseManager = world.build_manager
+	world.loot_stash_manager.train_stash["scrap"] = 10
+	world.loot_stash_manager.train_stash["parts"] = 10
+	world.loot_stash_manager.train_stash["fuel"] = 10
+	var sl_res: Dictionary = bm4.try_place_structure("searchlight", Vector3(4.0, 0.0, 6.0), 0.0, world.sector_generator.world_bounds, world.loot_stash_manager.backpack, world.loot_stash_manager.train_stash)
+	_assert(bool(sl_res.get("ok", false)) and (sl_res["entry"]["node"] as Node3D).find_child("PoleSearchlightCone", true, false) is SpotLight3D, "Milestone 4 (Searchlight): Searchlight pole spawns working SpotLight3D cone")
+	_assert(world.sector_generator.house_windows.size() >= 4, "Milestone 4 (Windows): CDDA houses expose barricadeable window sockets (got %d)" % world.sector_generator.house_windows.size())
+	var wb_res: Dictionary = bm4.barricade_house_window(world.sector_generator.house_windows[0], world.sector_generator.world_bounds, world.loot_stash_manager.backpack, world.loot_stash_manager.train_stash)
+	_assert(bool(wb_res.get("ok", false)) and bool(world.sector_generator.house_windows[0].get("boarded", false)), "Milestone 4 (Window Board): Boards up CDDA house window socket cleanly")
+	var tur4_res: Dictionary = bm4.try_place_structure("turret", Vector3(-4.0, 0.0, 6.0), 0.0, world.sector_generator.world_bounds, world.loot_stash_manager.backpack, world.loot_stash_manager.train_stash)
+	var scrap_before_dis: int = int(world.loot_stash_manager.backpack.get("scrap", 0))
+	var parts_before_dis: int = int(world.loot_stash_manager.backpack.get("parts", 0))
+	var dis_res: Dictionary = bm4.dismantle_structure(str(tur4_res["entry"]["id"]), world.loot_stash_manager.backpack)
+	_assert(bool(dis_res.get("ok", false)) and int(world.loot_stash_manager.backpack.get("scrap", 0)) > scrap_before_dis and int(world.loot_stash_manager.backpack.get("parts", 0)) > parts_before_dis, "Milestone 4 (Relocate): Dismantling turret refunds both scrap & parts")
+
+	# Departure threshold & cross-sector transition (preserves train & stash, clears ground structures)
+	var dep_blocked: Dictionary = world.depart_to_next_sector()
+	_assert(not bool(dep_blocked.get("ok", false)) and str(dep_blocked.get("reason", "")) == "blockade", "Milestone 4 (Departure Gate): Blocks departure before clearing Railway Blockade")
+	em4.clear_rail_blockade()
+	world.day_night_manager.force_phase(DayNightCycleManager.Phase.DAY, 1, 0.0)
+	world.armored_train.apply_hull_damage(120.0)
+	var hull_pre_depart: float = world.armored_train.hull_hp
+	var stash_scrap_pre: int = int(world.loot_stash_manager.train_stash.get("scrap", 0))
+	world.spawn_demo_fortifications_on_start = false
+	var dep_ok: Dictionary = world.depart_to_next_sector()
+	world.spawn_demo_fortifications_on_start = true
+	_assert(bool(dep_ok.get("ok", false)) and em4.sector_index == 2 and not em4.rail_barricade_cleared, "Milestone 4 (Cross-Sector): Departs cleanly to Sector #2 with new blockade")
+	_assert(is_equal_approx(world.armored_train.hull_hp, hull_pre_depart) and int(world.loot_stash_manager.train_stash.get("scrap", 0)) == stash_scrap_pre, "Milestone 4 (Cross-Sector): Preserves train hull HP & train stash across Sector transition")
+	_assert(bm4.structures.is_empty(), "Milestone 4 (Cross-Sector): Abandons/clears previous Sector ground fortifications")
+
+	# Restore clean Day 1 docked sector state for Phase 2-5 assertions
+	world.meta_progression.modification_cores = cores_before
+	world.generate_new_sector(424242, true)
+
 	# --- Phase 2 Verification: Armored Train Base Landmark ---
 	_assert(world.armored_train != null and world.armored_train is ArmoredTrainBase, "Phase 2: ArmoredTrainBase initialized")
 	var train: ArmoredTrainBase = world.armored_train
@@ -500,6 +736,22 @@ func _test_main_scene_player_and_phase2() -> void:
 	hm.update_horde(10.0, player.global_position, true, train, world.train_consist.compute_stats(), 0.0)
 	_assert(wave_spawned == 0 and ambush_spawned == 0 and hm.get_active_zombie_count() == 0, "Dev Cheat (Pause Spawns): Freezes periodic, wave, and ambush zombie spawning")
 	world.set_cheat("pause_spawns", false)
+
+	# Cheat 4: Day/Night phase switching, Day +1, Blood Moon controls & Elite spawn
+	world.dev_cheat_ui.phase_selected.emit(DayNightCycleManager.Phase.NIGHT)
+	_assert(world.day_night_manager.current_phase == DayNightCycleManager.Phase.NIGHT and not world.day_night_manager.is_train_mobile(), "Dev Cheat (Day/Night): Switches directly to NIGHT")
+	world.dev_cheat_ui.next_day_requested.emit()
+	_assert(world.day_night_manager.current_day == 2 and hm.current_day == 2, "Dev Cheat (Day +1): Advances to Day 2 and updates HordeManager")
+	world.dev_cheat_ui.blood_moon_delta_requested.emit(100.0)
+	_assert(world.day_night_manager.blood_moon_value >= 100.0 and world.day_night_manager.is_blood_moon_warning(), "Dev Cheat (Blood Moon): Sets Blood Moon gauge to 100%% warning")
+	world.dev_cheat_ui.blood_moon_delta_requested.emit(-100.0)
+	_assert(is_equal_approx(world.day_night_manager.blood_moon_value, 0.0) and not world.day_night_manager.is_blood_moon_warning(), "Dev Cheat (Blood Moon): Resets Blood Moon gauge cleanly")
+	world.dev_cheat_ui.phase_selected.emit(DayNightCycleManager.Phase.BLOOD_MOON)
+	_assert(world.day_night_manager.is_blood_moon(), "Dev Cheat (Blood Moon): Triggers BLOOD_MOON phase directly")
+	var cnt_before_elite: int = hm.get_active_zombie_count()
+	world.dev_cheat_ui.spawn_blood_elite_requested.emit()
+	_assert(hm.get_active_zombie_count() == cnt_before_elite + 1, "Dev Cheat (Blood Elite): Spawns blood_elite unit on demand")
+	world.dev_cheat_ui.phase_selected.emit(DayNightCycleManager.Phase.DAY)
 
 	# --- 4x Expanded Map, Enlarged Enterable Train, Working NPCs & Non-Player Stickman Verification ---
 	var map_area: float = world.sector_generator.world_bounds.size.x * world.sector_generator.world_bounds.size.y

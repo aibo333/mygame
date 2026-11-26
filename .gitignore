@@ -1,0 +1,40 @@
+# Godot 4+ specific ignores
+.godot/
+
+# Godot-specific ignores
+*.translation
+
+# Imported caches and samples
+.import/
+
+# Mono-specific ignores
+.mono/
+data_*/
+mono_crash.*.json
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+
+# ==============================================================================
+# External Binary Assets (Managed via Google Drive; see ASSETS.md)
+# Keep *.import, *.tres (e.g. BoneMap), and *.gdshader tracked in Git!
+# ==============================================================================
+assets/packs/**
+!assets/packs/**/
+!assets/packs/**/*.import
+
+assets/animations/mixamo/*.fbx
+assets/animations/mixamo/*.glb
+
+# Legacy/generated binary models, textures, sprites, and preview renders
+assets/models/**
+assets/textures/**
+assets/sprites/**
+tools/art_pipeline/previews/**
+
+# Local asset bundle archives & staging
+dist/
+*.zip

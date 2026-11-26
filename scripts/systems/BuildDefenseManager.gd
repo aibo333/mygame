@@ -5,7 +5,7 @@ signal structure_built(entry: Dictionary)
 signal structure_removed(entry_id: String, kind: String)
 signal build_mode_changed(active: bool, selected_kind: String)
 
-const STRUCTURE_ORDER: Array[String] = ["sandbag", "barricade", "landmine", "turret"]
+const STRUCTURE_ORDER: Array[String] = ["sandbag", "barricade", "landmine", "turret", "searchlight", "window_board"]
 
 const STRUCTURE_CATALOG: Dictionary = {
 	"sandbag": {
@@ -49,6 +49,24 @@ const STRUCTURE_CATALOG: Dictionary = {
 		"size": Vector3(1.1, 1.45, 1.1),
 		"desc": "自動旋轉鎖定 14.5m 內喪屍並持續開火壓制（26 DPS）",
 		"accent": Color(0.36, 0.90, 1.0),
+	},
+	"searchlight": {
+		"name": "探照燈柱",
+		"icon": "🔦",
+		"hp": 140.0,
+		"cost": {"scrap": 2, "parts": 2, "fuel": 1},
+		"size": Vector3(0.65, 3.2, 0.65),
+		"desc": "防線照明塔柱，向指定朝向投射強光光錐照亮夜戰死角（140 HP）",
+		"accent": Color(0.98, 0.88, 0.42),
+	},
+	"window_board": {
+		"name": "封窗木板",
+		"icon": "🪵",
+		"hp": 260.0,
+		"cost": {"scrap": 1},
+		"size": Vector3(1.15, 1.85, 0.26),
+		"desc": "強化建築封窗／封門木板柵欄，可阻擋遊蕩喪屍並可拆遷回收（260 HP）",
+		"accent": Color(0.72, 0.56, 0.36),
 	},
 }
 
@@ -302,17 +320,57 @@ func repair_structure(sid: String, backpack: Dictionary, train_stash: Dictionary
 	return {"ok": false, "message": "找不到該防禦工事"}
 
 
-func dismantle_structure(sid: String, backpack: Dictionary) -> Dictionary:
+func dismantle_structure(sid: String, backpack: Dictionary, train_stash: Dictionary = {}) -> Dictionary:
 	for st: Dictionary in structures:
 		if str(st.get("id", "")) == sid and bool(st.get("alive", false)):
 			var kind: String = str(st["kind"])
 			var spec: Dictionary = STRUCTURE_CATALOG.get(kind, {}) as Dictionary
 			var cost: Dictionary = spec.get("cost", {}) as Dictionary
-			var refund_scrap: int = maxi(1, int(cost.get("scrap", 1)) / 2)
-			backpack["scrap"] = int(backpack.get("scrap", 0)) + refund_scrap
+			var recovered: Dictionary = {}
+			var refund_scrap: int = 0
+			for k: String in LootStashManager.RESOURCE_ORDER:
+				var c_amt: int = int(cost.get(k, 0))
+				if c_amt <= 0:
+					continue
+				var rec: int = maxi(1 if k == "scrap" else 0, c_amt / 2)
+				if rec <= 0 and c_amt >= 1 and k == "parts":
+					rec = 1
+				if rec > 0:
+					recovered[k] = rec
+					backpack[k] = int(backpack.get(k, 0)) + rec
+					if k == "scrap":
+						refund_scrap = rec
+			if recovered.is_empty():
+				recovered["scrap"] = 1
+				backpack["scrap"] = int(backpack.get("scrap", 0)) + 1
+				refund_scrap = 1
+			var names: Dictionary = {"scrap": "金屬", "parts": "零件", "fuel": "燃料", "supplies": "補給"}
+			var rec_parts: PackedStringArray = PackedStringArray()
+			for rk: String in LootStashManager.RESOURCE_ORDER:
+				var rv: int = int(recovered.get(rk, 0))
+				if rv > 0:
+					rec_parts.append("%s+%d" % [str(names.get(rk, rk)), rv])
 			_destroy_structure_entry(st)
-			return {"ok": true, "refund_scrap": refund_scrap, "message": "已拆除【%s】，回收廢金屬 +%d" % [str(st["name"]), refund_scrap]}
+			return {
+				"ok": true,
+				"refund_scrap": refund_scrap,
+				"recovered": recovered,
+				"message": "已拆遷回收【%s】：%s" % [str(st["name"]), " ".join(rec_parts)],
+			}
 	return {"ok": false, "message": "找不到該防禦工事"}
+
+
+func barricade_house_window(win_entry: Dictionary, bounds: Rect2, backpack: Dictionary, train_stash: Dictionary) -> Dictionary:
+	if win_entry.is_empty():
+		return {"ok": false, "message": "附近沒有可封固的窗戶"}
+	if bool(win_entry.get("boarded", false)):
+		return {"ok": false, "message": "此窗戶已經架設封窗木板"}
+	var wpos: Vector3 = win_entry.get("pos", Vector3.ZERO) as Vector3
+	var yaw: float = float(win_entry.get("yaw_deg", 0.0))
+	var res: Dictionary = try_place_structure("window_board", wpos, yaw, bounds, backpack, train_stash)
+	if bool(res.get("ok", false)):
+		win_entry["boarded"] = true
+	return res
 
 
 func update_defenses(delta: float, horde: HordeManager) -> void:
@@ -447,6 +505,33 @@ func _spawn_structure_3d(sid: String, kind: String, pos: Vector3, yaw_deg: float
 			_cyl(turret_head, 0.06, 0.95, Vector3(-0.14, 0.0, 0.65), barrel_mat, Vector3(90.0, 0.0, 0.0))
 			_cyl(turret_head, 0.06, 0.95, Vector3(0.14, 0.0, 0.65), barrel_mat, Vector3(90.0, 0.0, 0.0))
 			_add_solid_collider(root, Vector3(1.1, 1.45, 1.1))
+		"searchlight":
+			var pole_mat: StandardMaterial3D = _mat(Color(0.24, 0.28, 0.34), 0.72, 0.42)
+			var lamp_mat: StandardMaterial3D = _mat(Color(1.0, 0.94, 0.72), 0.1, 0.2, Color(1.0, 0.90, 0.62), 3.4)
+			_cyl(root, 0.34, 0.25, Vector3(0.0, 0.125, 0.0), pole_mat)
+			_cyl(root, 0.09, 3.1, Vector3(0.0, 1.65, 0.0), pole_mat)
+			_box(root, Vector3(0.56, 0.32, 0.38), Vector3(0.0, 3.15, 0.12), pole_mat)
+			_box(root, Vector3(0.46, 0.22, 0.08), Vector3(0.0, 3.15, 0.32), lamp_mat)
+			var flood := SpotLight3D.new()
+			flood.name = "PoleSearchlightCone"
+			flood.light_color = Color(1.0, 0.94, 0.78)
+			flood.light_energy = 7.2
+			flood.spot_range = 24.0
+			flood.spot_angle = 42.0
+			flood.spot_attenuation = 0.9
+			flood.shadow_enabled = false
+			flood.position = Vector3(0.0, 3.15, 0.36)
+			flood.basis = Basis.looking_at(Vector3(0.0, -0.32, 1.0), Vector3.UP)
+			root.add_child(flood)
+			_add_solid_collider(root, Vector3(0.65, 3.2, 0.65))
+		"window_board":
+			var plank_mat: StandardMaterial3D = _mat(Color(0.44, 0.32, 0.21), 0.08, 0.86)
+			var nail_mat: StandardMaterial3D = _mat(Color(0.32, 0.36, 0.42), 0.78, 0.36)
+			for py in [0.45, 0.92, 1.38, 1.76]:
+				_box(root, Vector3(1.14, 0.18, 0.12), Vector3(0.0, py, 0.0), plank_mat, Vector3(0.0, 0.0, -3.5 if int(py * 10) % 2 == 0 else 3.5))
+			_box(root, Vector3(0.14, 1.72, 0.16), Vector3(-0.42, 1.05, 0.0), nail_mat)
+			_box(root, Vector3(0.14, 1.72, 0.16), Vector3(0.42, 1.05, 0.0), nail_mat)
+			_add_solid_collider(root, Vector3(1.15, 1.85, 0.26))
 
 	return {"node": root, "turret_head": turret_head}
 

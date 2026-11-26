@@ -13,6 +13,7 @@ signal player_died()
 
 const TOON_SHADER := preload("res://assets/shaders/anime_toon.gdshader")
 const OUTLINE_SHADER := preload("res://assets/shaders/anime_outline.gdshader")
+const SILHOUETTE_SHADER := preload("res://assets/shaders/character_silhouette.gdshader")
 
 const ROLL_DURATION: float = 0.62
 const ROLL_IFRAME_DURATION: float = 0.48
@@ -254,6 +255,11 @@ func _build_interact_bar() -> void:
 	interact_bar_root.add_child(interact_bar_fill)
 
 
+var flashlight_light: SpotLight3D = null
+var _night_lights_active: bool = false
+var _flashlight_override: int = -1  # -1 = auto, 0 = forced off, 1 = forced on
+
+
 func _init_model_pivot() -> void:
 	if model_pivot != null:
 		return
@@ -271,6 +277,53 @@ func _init_model_pivot() -> void:
 	muzzle_light.omni_range = 5.5
 	muzzle_light.position = Vector3(0.24, 1.35, -0.95)
 	model_pivot.add_child(muzzle_light)
+
+	# Tactical shoulder/weapon SpotLight3D cone pointing along facing direction (-Z)
+	flashlight_light = SpotLight3D.new()
+	flashlight_light.name = "TacticalFlashlight"
+	flashlight_light.light_color = Color(0.86, 0.94, 1.0)
+	flashlight_light.light_energy = 5.2
+	flashlight_light.spot_range = 24.0
+	flashlight_light.spot_angle = 36.0
+	flashlight_light.spot_angle_attenuation = 0.85
+	flashlight_light.spot_attenuation = 1.15
+	flashlight_light.shadow_enabled = false
+	flashlight_light.position = Vector3(0.18, 1.38, -0.45)
+	flashlight_light.rotation_degrees = Vector3(-6.0, 0.0, 0.0)
+	flashlight_light.visible = false
+	model_pivot.add_child(flashlight_light)
+
+
+func set_night_flashlight(night_active: bool) -> void:
+	_night_lights_active = night_active
+	_sync_flashlight_visibility()
+
+
+func toggle_flashlight() -> bool:
+	if is_flashlight_on():
+		_flashlight_override = 0
+	else:
+		_flashlight_override = 1
+	_sync_flashlight_visibility()
+	return is_flashlight_on()
+
+
+func reset_flashlight_auto() -> void:
+	_flashlight_override = -1
+	_sync_flashlight_visibility()
+
+
+func is_flashlight_on() -> bool:
+	if _flashlight_override == 0:
+		return false
+	if _flashlight_override == 1:
+		return true
+	return _night_lights_active
+
+
+func _sync_flashlight_visibility() -> void:
+	if flashlight_light != null:
+		flashlight_light.visible = is_flashlight_on()
 
 
 func get_active_avatar_id() -> String:
@@ -553,15 +606,23 @@ func _apply_avatar_materials(root_node: Node, avatar_cfg: Dictionary) -> void:
 	var outfit_tint := Color(0.84, 0.84, 0.86)
 	var face_tint := Color(0.88, 0.88, 0.90)
 
+	var silhouette_mat := ShaderMaterial.new()
+	silhouette_mat.shader = SILHOUETTE_SHADER
+	silhouette_mat.render_priority = 12
+	silhouette_mat.set_shader_parameter("silhouette_color", Color(0.18, 0.78, 0.98, 0.52))
+	silhouette_mat.set_shader_parameter("rim_color", Color(0.62, 0.95, 1.0, 0.94))
+	silhouette_mat.set_shader_parameter("min_occluder_gap", 0.55)
+
 	var outline_mat := ShaderMaterial.new()
 	outline_mat.shader = OUTLINE_SHADER
 	outline_mat.set_shader_parameter("outline_color", Color(0.18, 0.14, 0.22, 1.0))
 	outline_mat.set_shader_parameter("outline_width", 0.0038)
+	outline_mat.next_pass = silhouette_mat
 
-	_apply_materials_recursive(root_node, tex_map, hide_substrings, outfit_tint, face_tint, outline_mat)
+	_apply_materials_recursive(root_node, tex_map, hide_substrings, outfit_tint, face_tint, outline_mat, silhouette_mat)
 
 
-func _apply_materials_recursive(node: Node, tex_map: Dictionary, hide_substrings: Array, outfit_tint: Color, face_tint: Color, outline_mat: ShaderMaterial) -> void:
+func _apply_materials_recursive(node: Node, tex_map: Dictionary, hide_substrings: Array, outfit_tint: Color, face_tint: Color, outline_mat: ShaderMaterial, silhouette_mat: ShaderMaterial) -> void:
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
 		var nlow := mi.name.to_lower()
@@ -606,10 +667,12 @@ func _apply_materials_recursive(node: Node, tex_map: Dictionary, hide_substrings
 					toon.set_shader_parameter("is_face_material", is_face)
 					if not is_face:
 						toon.next_pass = outline_mat
+					else:
+						toon.next_pass = silhouette_mat
 					mi.set_surface_override_material(s, toon)
 
 	for c in node.get_children():
-		_apply_materials_recursive(c, tex_map, hide_substrings, outfit_tint, face_tint, outline_mat)
+		_apply_materials_recursive(c, tex_map, hide_substrings, outfit_tint, face_tint, outline_mat, silhouette_mat)
 
 
 func set_camera_yaw(yaw_rad: float) -> void:

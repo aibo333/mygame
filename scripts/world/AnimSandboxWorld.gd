@@ -530,6 +530,7 @@ func _build_ui() -> void:
 	var root_ctrl := Control.new()
 	root_ctrl.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root_ctrl.theme = TacticalTheme.build_theme(14)
 	_hud_layer.add_child(root_ctrl)
 
 	_build_debug_panel(root_ctrl)
@@ -537,13 +538,7 @@ func _build_ui() -> void:
 
 
 func _make_panel_style(bg: Color, border: Color) -> StyleBoxFlat:
-	var st := StyleBoxFlat.new()
-	st.bg_color = bg
-	st.border_color = border
-	st.set_border_width_all(1)
-	st.set_corner_radius_all(8)
-	st.set_content_margin_all(12)
-	return st
+	return TacticalTheme.make_accent_card_style(bg, border, 3, 12, 10)
 
 
 func _build_debug_panel(parent: Control) -> void:
@@ -553,7 +548,7 @@ func _build_debug_panel(parent: Control) -> void:
 	panel.custom_minimum_size = Vector2(360.0, 560.0)
 	panel.add_theme_stylebox_override(
 		"panel",
-		_make_panel_style(Color(0.08, 0.10, 0.14, 0.90), Color(0.30, 0.78, 0.96, 0.55))
+		_make_panel_style(TacticalTheme.BG_PANEL, TacticalTheme.ACCENT_CYAN)
 	)
 	parent.add_child(panel)
 
@@ -565,14 +560,14 @@ func _build_debug_panel(parent: Control) -> void:
 	var hdr := HBoxContainer.new()
 	vb.add_child(hdr)
 	var title := Label.new()
-	title.text = "🎬 動作調教沙盒 • Debug Panel"
+	title.text = "SANDBOX // ANIMATION DEBUGGER"
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.add_theme_font_size_override("font_size", 16)
-	title.add_theme_color_override("font_color", Color(0.55, 0.92, 1.0))
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", TacticalTheme.ACCENT_CYAN)
 	hdr.add_child(title)
 
 	var back_btn := Button.new()
-	back_btn.text = "⬅ 主選單"
+	back_btn.text = "◀ MENU"
 	back_btn.pressed.connect(return_to_start_menu)
 	hdr.add_child(back_btn)
 
@@ -705,15 +700,15 @@ func _build_debug_panel(parent: Control) -> void:
 
 	# Copy parameters button
 	var copy_btn := Button.new()
-	copy_btn.text = "📋 複製目前斷點與倍速參數"
+	copy_btn.text = "COPY // 複製目前斷點與倍速參數"
 	copy_btn.pressed.connect(copy_tuning_summary)
 	vb.add_child(copy_btn)
 
 	_status_label = Label.new()
-	_status_label.text = "右鍵拖曳旋轉鏡頭｜滾輪縮放｜[ / ] 快速設斷點"
+	_status_label.text = "RMB ORBIT  |  WHEEL ZOOM  |  [ / ] SET BREAKPOINTS"
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_status_label.add_theme_font_size_override("font_size", 12)
-	_status_label.add_theme_color_override("font_color", Color(0.62, 0.85, 0.72))
+	_status_label.add_theme_font_size_override("font_size", 11)
+	_status_label.add_theme_color_override("font_color", TacticalTheme.ACCENT_CYAN)
 	vb.add_child(_status_label)
 
 
@@ -727,7 +722,7 @@ func _build_timeline_bar(parent: Control) -> void:
 	bar.offset_bottom = -14.0
 	bar.add_theme_stylebox_override(
 		"panel",
-		_make_panel_style(Color(0.08, 0.10, 0.14, 0.93), Color(0.35, 0.80, 0.98, 0.60))
+		_make_panel_style(TacticalTheme.BG_PANEL, TacticalTheme.ACCENT_CYAN)
 	)
 	parent.add_child(bar)
 
@@ -741,26 +736,26 @@ func _build_timeline_bar(parent: Control) -> void:
 	vb.add_child(row1)
 
 	_play_btn = Button.new()
-	_play_btn.text = "⏸ 暫停"
+	_play_btn.text = "PAUSE"
 	_play_btn.custom_minimum_size = Vector2(84.0, 30.0)
 	_play_btn.pressed.connect(toggle_play_pause)
 	row1.add_child(_play_btn)
 
 	var prev_btn := Button.new()
-	prev_btn.text = "⏮ -1幀"
+	prev_btn.text = "◀ -1F"
 	prev_btn.pressed.connect(func() -> void: step_frames(-1))
 	row1.add_child(prev_btn)
 
 	var next_btn := Button.new()
-	next_btn.text = "⏭ +1幀"
+	next_btn.text = "+1F ▶"
 	next_btn.pressed.connect(func() -> void: step_frames(1))
 	row1.add_child(next_btn)
 
 	_loop_btn = Button.new()
-	_loop_btn.text = "🔁 循環: 開"
+	_loop_btn.text = "LOOP: ON"
 	_loop_btn.pressed.connect(func() -> void:
 		is_looping = not is_looping
-		_loop_btn.text = "🔁 循環: 開" if is_looping else "🔁 循環: 關"
+		_loop_btn.text = "LOOP: ON" if is_looping else "LOOP: OFF"
 	)
 	row1.add_child(_loop_btn)
 
@@ -910,19 +905,19 @@ func _sync_clip_sliders() -> void:
 
 func _sync_play_button() -> void:
 	if _play_btn != null:
-		_play_btn.text = "⏸ 暫停" if is_playing else "▶ 播放"
+		_play_btn.text = "PAUSE" if is_playing else "PLAY"
 
 
 func _sync_mode_buttons() -> void:
 	for m_key in _mode_buttons.keys():
 		var b: Button = _mode_buttons[m_key]
-		b.modulate = Color(0.55, 0.95, 1.0) if m_key == mode else Color(0.82, 0.85, 0.90)
+		TacticalTheme.style_state_button(b, m_key == mode, TacticalTheme.ACCENT_CYAN)
 
 
 func _sync_weapon_buttons() -> void:
 	var active_slot: int = player.get_active_weapon_slot() if player != null else 0
 	for i in range(_weapon_buttons.size()):
-		_weapon_buttons[i].modulate = Color(0.55, 0.95, 1.0) if i == active_slot else Color(0.82, 0.85, 0.90)
+		TacticalTheme.style_state_button(_weapon_buttons[i], i == active_slot, TacticalTheme.ACCENT_AMBER)
 
 
 func _refresh_timeline_ui() -> void:

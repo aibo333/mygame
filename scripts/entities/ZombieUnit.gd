@@ -57,7 +57,33 @@ const ARCHETYPES: Dictionary = {
 		"eye_color": Color(0.60, 1.0, 0.24),
 		"prioritize_train": false,
 		"explodes": true,
+		"elite": false,
 	},
+	"blood_elite": {
+		"label": "血月獵殺者",
+		"hp": 260.0,
+		"speed": 3.85,
+		"damage": 30.0,
+		"attack_cd": 1.05,
+		"scale": 1.38,
+		"body_color": Color(0.36, 0.08, 0.12),
+		"head_color": Color(0.58, 0.16, 0.22),
+		"eye_color": Color(1.0, 0.16, 0.28),
+		"prioritize_train": false,
+		"explodes": false,
+		"elite": true,
+	},
+}
+
+enum BehaviorMode {
+	ROAMER,
+	SIEGE,
+}
+
+enum AlertState {
+	IDLE_PATROL,
+	INVESTIGATE_NOISE,
+	CHASE,
 }
 
 var archetype: String = "walker"
@@ -68,7 +94,20 @@ var attack_damage: float = 10.0
 var attack_interval: float = 1.15
 var prioritize_train: bool = false
 var explodes_on_death: bool = false
+var is_elite: bool = false
 var is_alive: bool = false
+
+var behavior_mode: int = BehaviorMode.SIEGE
+var alert_state: int = AlertState.CHASE
+var is_indoor_spawn: bool = false
+var sight_range: float = 11.5
+var sight_half_angle_deg: float = 65.0
+var patrol_anchor: Vector3 = Vector3.ZERO
+var patrol_target: Vector3 = Vector3.ZERO
+var investigate_pos: Vector3 = Vector3.ZERO
+var investigate_timer: float = 0.0
+var _patrol_wait_timer: float = 0.0
+var _facing_dir: Vector3 = Vector3(0.0, 0.0, 1.0)
 
 var _visual_root: Node3D = null
 var _stickman_rig: Dictionary = {}
@@ -183,12 +222,26 @@ func activate(p_archetype: String, spawn_pos: Vector3, hp_mult: float = 1.0, spe
 	attack_interval = float(cfg.get("attack_cd", 1.15))
 	prioritize_train = bool(cfg.get("prioritize_train", false))
 	explodes_on_death = bool(cfg.get("explodes", false))
+	is_elite = bool(cfg.get("elite", false))
+
+	behavior_mode = BehaviorMode.SIEGE
+	alert_state = AlertState.CHASE
+	is_indoor_spawn = false
+	patrol_anchor = Vector3(spawn_pos.x, 0.0, spawn_pos.z)
+	patrol_target = patrol_anchor
+	investigate_timer = 0.0
+	_patrol_wait_timer = 0.0
+	var ang: float = randf() * TAU
+	_facing_dir = Vector3(cos(ang), 0.0, sin(ang)).normalized()
 
 	var sc: float = float(cfg.get("scale", 1.0))
 	_visual_root.scale = Vector3(sc * (1.25 if archetype == "bloater" else 1.0), sc, sc * (1.25 if archetype == "bloater" else 1.0))
 	_base_body_color = cfg.get("body_color", Color(0.36, 0.44, 0.34)) as Color
 	_body_mat.albedo_color = _base_body_color
-	_body_mat.emission_enabled = false
+	_body_mat.emission_enabled = is_elite
+	if is_elite:
+		_body_mat.emission = Color(0.65, 0.08, 0.14)
+		_body_mat.emission_energy_multiplier = 0.85
 	_head_mat.albedo_color = cfg.get("head_color", Color(0.52, 0.60, 0.46)) as Color
 
 	var eye_col: Color = cfg.get("eye_color", Color(1.0, 0.4, 0.2)) as Color
@@ -246,6 +299,50 @@ func apply_damage(amount: float) -> bool:
 	return false
 
 
+func setup_roamer(anchor_pos: Vector3, indoor: bool = false) -> void:
+	behavior_mode = BehaviorMode.ROAMER
+	alert_state = AlertState.IDLE_PATROL
+	is_indoor_spawn = indoor
+	patrol_anchor = Vector3(anchor_pos.x, 0.0, anchor_pos.z)
+	patrol_target = patrol_anchor
+	investigate_timer = 0.0
+	_patrol_wait_timer = randf_range(0.4, 1.8)
+
+
+func set_siege_mode() -> void:
+	behavior_mode = BehaviorMode.SIEGE
+	alert_state = AlertState.CHASE
+
+
+func hear_noise(noise_pos: Vector3, noise_radius: float) -> bool:
+	if not is_alive or behavior_mode != BehaviorMode.ROAMER:
+		return false
+	var dist: float = Vector2(noise_pos.x - global_position.x, noise_pos.z - global_position.z).length()
+	if dist > noise_radius:
+		return false
+	investigate_pos = Vector3(noise_pos.x, 0.0, noise_pos.z)
+	investigate_timer = 7.0
+	if dist <= 6.5:
+		alert_state = AlertState.CHASE
+	elif alert_state != AlertState.CHASE:
+		alert_state = AlertState.INVESTIGATE_NOISE
+	return true
+
+
+func _can_see_player(player_pos: Vector3, player_alive: bool) -> bool:
+	if not player_alive:
+		return false
+	var to_p: Vector3 = Vector3(player_pos.x - global_position.x, 0.0, player_pos.z - global_position.z)
+	var dist: float = to_p.length()
+	if dist <= 4.2:
+		return true
+	if dist > sight_range:
+		return false
+	var dir_to_p: Vector3 = to_p / maxf(0.001, dist)
+	var cos_limit: float = cos(deg_to_rad(sight_half_angle_deg))
+	return _facing_dir.dot(dir_to_p) >= cos_limit
+
+
 func tick_zombie(delta: float, player_pos: Vector3, player_alive: bool, train_target_pos: Vector3, tesla_slow_active: bool, cam_yaw_rad: float) -> void:
 	if not is_alive:
 		return
@@ -255,7 +352,7 @@ func tick_zombie(delta: float, player_pos: Vector3, player_alive: bool, train_ta
 		_hit_flash_timer = maxf(0.0, _hit_flash_timer - delta)
 		if _hit_flash_timer <= 0.0:
 			_body_mat.albedo_color = _base_body_color
-			_body_mat.emission_enabled = false
+			_body_mat.emission_enabled = is_elite
 
 	if _hp_bar_root != null and _hp_bar_root.visible:
 		_hp_bar_root.rotation = Vector3(deg_to_rad(-34.0), cam_yaw_rad, 0.0)
@@ -263,7 +360,58 @@ func tick_zombie(delta: float, player_pos: Vector3, player_alive: bool, train_ta
 	var dist_player: float = Vector2(player_pos.x - global_position.x, player_pos.z - global_position.z).length()
 	var dist_train: float = Vector2(train_target_pos.x - global_position.x, train_target_pos.z - global_position.z).length()
 
-	var target_is_train: bool = (not player_alive) or prioritize_train or (dist_train < 5.5 and dist_player > 4.2)
+	if behavior_mode == BehaviorMode.ROAMER:
+		if _can_see_player(player_pos, player_alive):
+			alert_state = AlertState.CHASE
+		elif alert_state == AlertState.CHASE and (not player_alive or dist_player > sight_range * 1.9):
+			alert_state = AlertState.INVESTIGATE_NOISE
+			investigate_pos = Vector3(player_pos.x, 0.0, player_pos.z)
+			investigate_timer = 5.0
+
+		if alert_state == AlertState.IDLE_PATROL:
+			var to_patrol: Vector3 = Vector3(patrol_target.x - global_position.x, 0.0, patrol_target.z - global_position.z)
+			var pdist: float = to_patrol.length()
+			if pdist <= 0.45:
+				velocity = Vector3.ZERO
+				_patrol_wait_timer -= delta
+				if _patrol_wait_timer <= 0.0:
+					_patrol_wait_timer = randf_range(1.0, 2.8)
+					var r_ang: float = randf() * TAU
+					var r_rad: float = randf_range(1.2, 2.8 if is_indoor_spawn else 4.5)
+					patrol_target = patrol_anchor + Vector3(cos(r_ang) * r_rad, 0.0, sin(r_ang) * r_rad)
+			else:
+				var pdir: Vector3 = to_patrol / maxf(0.001, pdist)
+				_facing_dir = pdir
+				velocity = pdir * (move_speed * 0.45)
+				move_and_slide()
+				global_position.y = 0.0
+				var pyaw: float = atan2(-pdir.x, -pdir.z)
+				_visual_root.rotation.y = lerp_angle(_visual_root.rotation.y, pyaw, clampf(delta * 8.0, 0.0, 1.0))
+			_animate_limb_wobble(delta, 0.45)
+			return
+
+		if alert_state == AlertState.INVESTIGATE_NOISE:
+			investigate_timer -= delta
+			var to_inv: Vector3 = Vector3(investigate_pos.x - global_position.x, 0.0, investigate_pos.z - global_position.z)
+			var idist: float = to_inv.length()
+			if idist <= 1.25 or investigate_timer <= 0.0:
+				alert_state = AlertState.IDLE_PATROL
+				patrol_anchor = Vector3(global_position.x, 0.0, global_position.z)
+				patrol_target = patrol_anchor
+				_patrol_wait_timer = 1.2
+				velocity = Vector3.ZERO
+				return
+			var idir: Vector3 = to_inv / maxf(0.001, idist)
+			_facing_dir = idir
+			velocity = idir * (move_speed * 0.78)
+			move_and_slide()
+			global_position.y = 0.0
+			var iyaw: float = atan2(-idir.x, -idir.z)
+			_visual_root.rotation.y = lerp_angle(_visual_root.rotation.y, iyaw, clampf(delta * 9.0, 0.0, 1.0))
+			_animate_limb_wobble(delta, 0.78)
+			return
+
+	var target_is_train: bool = (behavior_mode == BehaviorMode.SIEGE) and ((not player_alive) or prioritize_train or (dist_train < 5.5 and dist_player > 4.2))
 	var target_pos: Vector3 = train_target_pos if target_is_train else player_pos
 	var to_target: Vector3 = Vector3(target_pos.x - global_position.x, 0.0, target_pos.z - global_position.z)
 	var dist: float = to_target.length()
@@ -279,6 +427,7 @@ func tick_zombie(delta: float, player_pos: Vector3, player_alive: bool, train_ta
 				attacked_player.emit(attack_damage)
 	else:
 		var dir: Vector3 = to_target / maxf(0.001, dist)
+		_facing_dir = dir
 		var speed_factor: float = 0.65 if (tesla_slow_active and dist_train < 8.5) else 1.0
 		velocity = dir * (move_speed * speed_factor)
 		move_and_slide()
@@ -286,7 +435,11 @@ func tick_zombie(delta: float, player_pos: Vector3, player_alive: bool, train_ta
 		var yaw: float = atan2(-dir.x, -dir.z)
 		_visual_root.rotation.y = lerp_angle(_visual_root.rotation.y, yaw, clampf(delta * 10.0, 0.0, 1.0))
 
-	_wobble_phase += delta * (move_speed * 3.1)
+	_animate_limb_wobble(delta, 1.0)
+
+
+func _animate_limb_wobble(delta: float, speed_scale: float) -> void:
+	_wobble_phase += delta * (move_speed * 3.1 * speed_scale)
 	var stride: float = sin(_wobble_phase)
 	_visual_root.rotation.z = stride * 0.075
 	if _left_leg != null and _right_leg != null:

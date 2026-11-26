@@ -7,7 +7,7 @@ const WORLD_MAX_X: float = 44.0
 const WORLD_MIN_Z: float = -24.2
 const WORLD_MAX_Z: float = 36.2
 
-const TRAIN_POSITION: Vector3 = Vector3(0.0, 0.0, -21.5)
+const TRAIN_POSITION: Vector3 = Vector3(0.0, 0.0, -3.2)
 const DEFAULT_SECTOR_SEED: int = 20261125
 const KENNEY_DIR: String = "res://assets/packs/kenney_retro_urban/"
 const AVATAR_DIR: String = "res://assets/packs/summer_cuteness_avatar/Avatar_Female_Size01_SummerCuteness_UI/"
@@ -321,7 +321,7 @@ static func get_character(_char_id: String) -> Dictionary:
 		"fire_interval": 0.14,
 		"pellets": 1,
 		"spread_deg": 2.5,
-		"spawn_pos": Vector3(0.0, 0.0, -14.8),
+		"spawn_pos": Vector3(0.0, 0.0, 1.4),
 	}
 
 

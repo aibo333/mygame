@@ -3,6 +3,7 @@ extends Node3D
 
 signal wave_stage_changed(stage_index: int, stage_name: String)
 signal zombie_killed(archetype: String, total_kills: int, death_pos: Vector3)
+signal elite_loot_dropped(archetype: String, death_pos: Vector3, bonus_resources: Dictionary, mod_cores: int)
 signal run_timer_updated(remaining_sec: float, total_sec: float, stage_name: String)
 signal overtime_triggered()
 
@@ -14,6 +15,8 @@ var time_remaining: float = 360.0
 var difficulty_mult: float = 1.0
 var current_stage: int = 1
 var current_stage_name: String = "階段 1：靜默進站"
+var current_day: int = 1
+var current_cycle_phase: int = DayNightCycleManager.Phase.DAY
 var is_extraction_holdout: bool = false
 var is_overtime: bool = false
 var is_active: bool = true
@@ -53,6 +56,8 @@ func start_run(seed_value: int, bounds: Rect2, duration_sec: float = 360.0, p_di
 	is_overtime = false
 	is_active = true
 	total_kills = 0
+	current_day = 1
+	current_cycle_phase = DayNightCycleManager.Phase.DAY
 	_spawn_timer = 1.5
 	_wave_timer = 26.0
 	_turret_fire_cd = 0.0
@@ -62,6 +67,75 @@ func start_run(seed_value: int, bounds: Rect2, duration_sec: float = 360.0, p_di
 	spawn_wave(4, false)
 	wave_stage_changed.emit(current_stage, current_stage_name)
 	run_timer_updated.emit(time_remaining, total_run_duration, current_stage_name)
+
+
+func get_day_hp_multiplier() -> float:
+	var day_bonus: float = 1.0 + float(maxi(0, current_day - 1)) * 0.28
+	var bm_bonus: float = 1.35 if current_cycle_phase == DayNightCycleManager.Phase.BLOOD_MOON else 1.0
+	return difficulty_mult * day_bonus * bm_bonus * (1.25 if is_overtime else 1.0)
+
+
+func get_day_speed_multiplier() -> float:
+	var day_spd: float = float(maxi(0, current_day - 1)) * 0.08
+	var bm_spd: float = 0.16 if current_cycle_phase == DayNightCycleManager.Phase.BLOOD_MOON else 0.0
+	return 1.0 + (difficulty_mult - 1.0) * 0.25 + day_spd + bm_spd + (0.18 if is_overtime else 0.0)
+
+
+func set_day_night_state(phase: int, day_num: int) -> void:
+	var prev_phase: int = current_cycle_phase
+	current_cycle_phase = phase
+	current_day = maxi(1, day_num)
+	if prev_phase == phase:
+		return
+	if phase == DayNightCycleManager.Phase.NIGHT or phase == DayNightCycleManager.Phase.BLOOD_MOON:
+		for z: ZombieUnit in _pool:
+			if is_instance_valid(z) and z.is_alive:
+				z.set_siege_mode()
+		var siege_count: int = 5 + current_day * 2
+		if phase == DayNightCycleManager.Phase.BLOOD_MOON:
+			siege_count += 4
+			spawn_zombie("blood_elite", _pick_multi_directional_spawn_pos())
+		spawn_wave(mini(siege_count, maxi(0, POOL_SIZE - get_active_zombie_count())), true)
+
+
+func spawn_daytime_roamers(civil_houses: Array, count: int = 8) -> int:
+	if spawning_paused:
+		return 0
+	var spawned: int = 0
+	# Spawn indoor roamers inside CDDA civil houses first
+	for i: int in range(mini(civil_houses.size(), maxi(2, count / 2))):
+		var h: Dictionary = civil_houses[i] as Dictionary
+		var fp: Rect2 = h.get("footprint", Rect2()) as Rect2
+		var sockets: Array = h.get("loot_sockets", []) as Array
+		var rpos: Vector3 = Vector3(fp.position.x + fp.size.x * 0.5, 0.0, fp.position.y + fp.size.y * 0.5)
+		if not sockets.is_empty():
+			var s_entry: Dictionary = sockets[0] as Dictionary
+			var sp_raw: Variant = s_entry.get("pos", rpos)
+			if sp_raw is Vector3:
+				rpos = sp_raw as Vector3
+		var rz: ZombieUnit = spawn_zombie("walker" if i % 2 == 0 else "runner", rpos)
+		if rz != null:
+			rz.setup_roamer(rpos, true)
+			spawned += 1
+
+	# Fill remaining count as outdoor street roamers
+	while spawned < count and get_active_zombie_count() < POOL_SIZE:
+		var spos: Vector3 = _pick_multi_directional_spawn_pos()
+		var oz: ZombieUnit = spawn_zombie("walker", spos)
+		if oz == null:
+			break
+		oz.setup_roamer(spos, false)
+		spawned += 1
+	return spawned
+
+
+func emit_gunshot_noise(noise_pos: Vector3, noise_radius: float) -> int:
+	var alerted: int = 0
+	for z: ZombieUnit in _pool:
+		if is_instance_valid(z) and z.is_alive:
+			if z.hear_noise(noise_pos, noise_radius):
+				alerted += 1
+	return alerted
 
 
 func clear_all_zombies() -> void:
@@ -106,9 +180,7 @@ func connect_attack_handlers(on_player_hit: Callable, on_train_hit: Callable) ->
 func spawn_zombie(archetype: String, pos: Vector3) -> ZombieUnit:
 	for z: ZombieUnit in _pool:
 		if is_instance_valid(z) and not z.is_alive:
-			var hp_m: float = difficulty_mult * (1.25 if is_overtime else 1.0)
-			var spd_m: float = 1.0 + (difficulty_mult - 1.0) * 0.25 + (0.18 if is_overtime else 0.0)
-			z.activate(archetype, pos, hp_m, spd_m)
+			z.activate(archetype, pos, get_day_hp_multiplier(), get_day_speed_multiplier())
 			return z
 	return null
 
@@ -118,7 +190,7 @@ func spawn_wave(count: int, include_specials: bool = true) -> int:
 		return 0
 	var spawned: int = 0
 	for _i in range(count):
-		var spawn_pos: Vector3 = _pick_perimeter_spawn_pos()
+		var spawn_pos: Vector3 = _pick_multi_directional_spawn_pos()
 		var arch: String = _pick_archetype(include_specials)
 		if spawn_zombie(arch, spawn_pos) != null:
 			spawned += 1
@@ -167,32 +239,40 @@ func update_horde(
 	run_timer_updated.emit(time_remaining, total_run_duration, current_stage_name)
 
 	# 2. Periodic Spawns & Horde Waves
+	var is_night_siege: bool = (current_cycle_phase == DayNightCycleManager.Phase.NIGHT or current_cycle_phase == DayNightCycleManager.Phase.BLOOD_MOON)
 	if not spawning_paused:
-		var desired_cap: int = mini(POOL_SIZE, int(round((7.0 + float(current_stage) * 4.5) * difficulty_mult)))
-		if is_extraction_holdout or is_overtime:
-			desired_cap = mini(POOL_SIZE, int(round(22.0 * difficulty_mult)))
+		var desired_cap: int = mini(POOL_SIZE, int(round((7.0 + float(current_stage) * 4.5 + float(current_day - 1) * 3.0) * difficulty_mult)))
+		if not is_night_siege and not is_extraction_holdout and not is_overtime:
+			desired_cap = mini(POOL_SIZE, 10 + (current_day - 1) * 2)
+		if current_cycle_phase == DayNightCycleManager.Phase.BLOOD_MOON or is_extraction_holdout or is_overtime:
+			desired_cap = mini(POOL_SIZE, int(round((22.0 + float(current_day - 1) * 3.0) * difficulty_mult)))
 
 		_spawn_timer -= delta
 		if _spawn_timer <= 0.0:
 			var interval: float = 4.6 if current_stage == 1 else (3.1 if current_stage == 2 else 2.0)
-			if is_extraction_holdout or is_overtime:
+			if not is_night_siege and not is_extraction_holdout and not is_overtime:
+				interval = 7.5
+			if current_cycle_phase == DayNightCycleManager.Phase.BLOOD_MOON or is_extraction_holdout or is_overtime:
 				interval = 1.15
 			_spawn_timer = interval / maxf(0.7, difficulty_mult)
 			if get_active_zombie_count() < desired_cap:
-				spawn_zombie(_pick_archetype(current_stage >= 2 or is_extraction_holdout), _pick_perimeter_spawn_pos())
+				var sz := spawn_zombie(_pick_archetype(is_night_siege or current_stage >= 2 or is_extraction_holdout), _pick_multi_directional_spawn_pos())
+				if sz != null and not is_night_siege and not is_extraction_holdout and not is_overtime:
+					sz.setup_roamer(sz.global_position, false)
 
 		_wave_timer -= delta
 		if _wave_timer <= 0.0:
-			_wave_timer = 14.0 if (is_extraction_holdout or is_overtime) else (28.0 if current_stage >= 2 else 36.0)
-			var wave_cnt: int = int(round((3.0 + float(current_stage) * 1.5) * difficulty_mult))
-			if get_active_zombie_count() < POOL_SIZE - 2:
-				spawn_wave(mini(wave_cnt, POOL_SIZE - get_active_zombie_count()), current_stage >= 2 or is_extraction_holdout)
+			_wave_timer = 14.0 if (current_cycle_phase == DayNightCycleManager.Phase.BLOOD_MOON or is_extraction_holdout or is_overtime) else (22.0 if is_night_siege else 36.0)
+			if is_night_siege or is_extraction_holdout or is_overtime:
+				var wave_cnt: int = int(round((4.0 + float(current_day) * 1.5 + float(current_stage)) * difficulty_mult))
+				if get_active_zombie_count() < POOL_SIZE - 2:
+					spawn_wave(mini(wave_cnt, POOL_SIZE - get_active_zombie_count()), true)
 
-	# 3. Tick all active zombies
-	var train_target: Vector3 = train.get_boarding_world_pos() if train != null else Vector3(0.0, 0.0, -11.3)
+	# 3. Tick all active zombies (lock onto train's current parked perimeter during night siege!)
 	var has_tesla: bool = train != null and train.has_tesla_fence()
 	for z: ZombieUnit in _pool:
 		if is_instance_valid(z) and z.is_alive:
+			var train_target: Vector3 = train.get_nearest_perimeter_world_pos(z.global_position) if train != null else Vector3(0.0, 0.0, -3.2)
 			z.tick_zombie(delta, player_pos, player_alive, train_target, has_tesla, cam_yaw_rad)
 
 	# 4. Fire Armored Train Roof Auto-Turrets!
@@ -296,22 +376,45 @@ func _find_nearest_zombie(from_pos: Vector3, max_range: float) -> ZombieUnit:
 	return best
 
 
-func _pick_perimeter_spawn_pos() -> Vector3:
-	var edge: int = _rng.randi_range(0, 2)  # South, West, or East edges (never inside Train Platform!)
+func _pick_multi_directional_spawn_pos() -> Vector3:
+	var edge: int = _rng.randi_range(0, 3)  # North, South, West, or East edges (multi-directional!)
+	var rail_mid_z: float = (_world_bounds.position.y + _world_bounds.end.y) * 0.5
 	match edge:
 		0:
 			return Vector3(_rng.randf_range(_world_bounds.position.x + 2.0, _world_bounds.end.x - 2.0), 0.0, _world_bounds.end.y - 1.2)
 		1:
-			return Vector3(_world_bounds.position.x + 1.2, 0.0, _rng.randf_range(0.0, _world_bounds.end.y - 2.0))
+			return Vector3(_rng.randf_range(_world_bounds.position.x + 2.0, _world_bounds.end.x - 2.0), 0.0, _world_bounds.position.y + 1.2)
+		2:
+			var z_w: float = _rng.randf_range(_world_bounds.position.y + 2.0, _world_bounds.end.y - 2.0)
+			if absf(z_w - rail_mid_z) < 5.0:
+				z_w = rail_mid_z + (6.5 if z_w >= rail_mid_z else -6.5)
+			return Vector3(_world_bounds.position.x + 1.2, 0.0, clampf(z_w, _world_bounds.position.y + 1.5, _world_bounds.end.y - 1.5))
 		_:
-			return Vector3(_world_bounds.end.x - 1.2, 0.0, _rng.randf_range(0.0, _world_bounds.end.y - 2.0))
+			var z_e: float = _rng.randf_range(_world_bounds.position.y + 2.0, _world_bounds.end.y - 2.0)
+			if absf(z_e - rail_mid_z) < 5.0:
+				z_e = rail_mid_z + (6.5 if z_e >= rail_mid_z else -6.5)
+			return Vector3(_world_bounds.end.x - 1.2, 0.0, clampf(z_e, _world_bounds.position.y + 1.5, _world_bounds.end.y - 1.5))
+
+
+func _pick_perimeter_spawn_pos() -> Vector3:
+	return _pick_multi_directional_spawn_pos()
 
 
 func _pick_archetype(include_specials: bool) -> String:
 	if not include_specials:
 		return "walker"
 	var r: float = _rng.randf()
-	if current_stage >= 3 or is_extraction_holdout or is_overtime:
+	if current_cycle_phase == DayNightCycleManager.Phase.BLOOD_MOON:
+		if r < 0.14:
+			return "blood_elite"
+		if r < 0.30:
+			return "brute"
+		if r < 0.44:
+			return "bloater"
+		if r < 0.72:
+			return "runner"
+		return "walker"
+	if current_stage >= 3 or is_extraction_holdout or is_overtime or current_cycle_phase == DayNightCycleManager.Phase.NIGHT:
 		if r < 0.14:
 			return "brute"
 		if r < 0.26:
@@ -329,6 +432,9 @@ func _on_zombie_died(zombie: ZombieUnit, arch: String, death_pos: Vector3) -> vo
 	total_kills += 1
 	if zombie.explodes_on_death:
 		_spawn_hit_spark(death_pos + Vector3(0.0, 0.8, 0.0), Color(0.55, 1.0, 0.25), 2.4)
+	if arch == "blood_elite":
+		_spawn_hit_spark(death_pos + Vector3(0.0, 0.9, 0.0), Color(1.0, 0.18, 0.32), 2.8)
+		elite_loot_dropped.emit(arch, death_pos, {"parts": 2, "fuel": 1}, 1)
 	zombie_killed.emit(arch, total_kills, death_pos)
 
 

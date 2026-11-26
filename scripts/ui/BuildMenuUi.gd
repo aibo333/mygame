@@ -4,6 +4,15 @@ extends CanvasLayer
 signal structure_selected(kind: String)
 signal closed()
 
+const KIND_CODES: Dictionary = {
+	"sandbag": "SB-01",
+	"barricade": "BR-02",
+	"landmine": "MN-03",
+	"turret": "TR-04",
+	"searchlight": "SL-05",
+	"window_board": "WB-06",
+}
+
 var _panel: PanelContainer = null
 var _materials_label: Label = null
 var _buttons: Dictionary = {}
@@ -45,9 +54,9 @@ func refresh(manager: BuildDefenseManager, backpack: Dictionary, train_stash: Di
 	var pool: Dictionary = manager.get_combined_resources(backpack, train_stash)
 	if _materials_label != null:
 		if manager.infinite_resources:
-			_materials_label.text = "🏗 野外建造模式 [B] — ♾️ 無限資源已啟用（全工事免費建造）｜ 左鍵放置 ｜ Q 旋轉 ｜ 右鍵/Esc 結束"
+			_materials_label.text = "FIELD FORTIFICATION [B] // DEV INFINITE STOCK ACTIVE  |  [LMB] DEPLOY  [Q] ROTATE  [RMB/ESC] EXIT"
 		else:
-			_materials_label.text = "🏗 野外建造模式 [B] — 可用材料（背包＋暫存倉）：金屬 %d ｜ 零件 %d ｜ 燃料 %d ｜ 左鍵放置 ｜ Q 旋轉 ｜ 右鍵/Esc 結束" % [
+			_materials_label.text = "FIELD FORTIFICATION [B] // STOCK: SCRAP %d | PARTS %d | FUEL %d  //  [LMB] DEPLOY  [Q] ROTATE  [ESC] EXIT" % [
 				int(pool.get("scrap", 0)),
 				int(pool.get("parts", 0)),
 				int(pool.get("fuel", 0)),
@@ -58,22 +67,17 @@ func refresh(manager: BuildDefenseManager, backpack: Dictionary, train_stash: Di
 			continue
 		var spec: Dictionary = BuildDefenseManager.STRUCTURE_CATALOG[kind] as Dictionary
 		var afford: bool = manager.can_afford_structure(kind, backpack, train_stash)
-		var sel_tag: String = "▶ " if kind == _selected_kind else ""
-		btn.text = "%s%s %s\n%s" % [sel_tag, str(spec.get("icon", "")), str(spec.get("name", kind)), manager.format_cost(kind)]
-		btn.modulate = Color(1.0, 0.96, 0.80) if afford else Color(0.65, 0.56, 0.52)
-
-
-func _make_style(bg: Color, border: Color, radius: int = 10) -> StyleBoxFlat:
-	var sb: StyleBoxFlat = StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(radius)
-	sb.content_margin_left = 14
-	sb.content_margin_right = 14
-	sb.content_margin_top = 10
-	sb.content_margin_bottom = 10
-	return sb
+		var is_sel: bool = (kind == _selected_kind)
+		var code: String = str(KIND_CODES.get(kind, "DF"))
+		btn.text = "[%s] %s\n%s" % [code, str(spec.get("name", kind)), manager.format_cost(kind)]
+		var accent: Color = spec.get("accent", TacticalTheme.ACCENT_CYAN) as Color
+		if is_sel:
+			TacticalTheme.style_state_button(btn, true, TacticalTheme.ACCENT_AMBER)
+		elif afford:
+			TacticalTheme.style_state_button(btn, false, accent)
+		else:
+			btn.add_theme_stylebox_override("normal", TacticalTheme.make_panel_style(Color(0.05, 0.06, 0.08, 0.85), Color(0.24, 0.20, 0.22, 0.7), 1, 8, 5, 1))
+			btn.add_theme_color_override("font_color", TacticalTheme.TEXT_MUTED)
 
 
 func _build_ui() -> void:
@@ -81,16 +85,17 @@ func _build_ui() -> void:
 	root.name = "BuildMenuRoot"
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.theme = TacticalTheme.build_theme(14)
 	add_child(root)
 
 	_panel = PanelContainer.new()
 	_panel.name = "BuildMenuPanel"
 	_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	_panel.offset_left = -450.0
-	_panel.offset_top = -238.0
-	_panel.offset_right = 450.0
+	_panel.offset_left = -520.0
+	_panel.offset_top = -234.0
+	_panel.offset_right = 520.0
 	_panel.offset_bottom = -114.0
-	_panel.add_theme_stylebox_override("panel", _make_style(Color(0.16, 0.13, 0.10, 0.95), Color(0.92, 0.70, 0.30, 0.94)))
+	_panel.add_theme_stylebox_override("panel", TacticalTheme.make_accent_card_style(TacticalTheme.BG_PANEL_DEEP, TacticalTheme.ACCENT_AMBER, 3, 14, 10))
 	root.add_child(_panel)
 
 	var vbox: VBoxContainer = VBoxContainer.new()
@@ -98,12 +103,12 @@ func _build_ui() -> void:
 	_panel.add_child(vbox)
 
 	_materials_label = Label.new()
-	_materials_label.add_theme_font_size_override("font_size", 15)
-	_materials_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.52))
+	_materials_label.add_theme_font_size_override("font_size", 13)
+	_materials_label.add_theme_color_override("font_color", TacticalTheme.ACCENT_AMBER)
 	vbox.add_child(_materials_label)
 
 	var row: HBoxContainer = HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
+	row.add_theme_constant_override("separation", 8)
 	vbox.add_child(row)
 
 	for kind: String in BuildDefenseManager.STRUCTURE_ORDER:
@@ -111,9 +116,9 @@ func _build_ui() -> void:
 		var btn: Button = Button.new()
 		btn.focus_mode = Control.FOCUS_NONE
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.custom_minimum_size = Vector2(0.0, 62.0)
-		btn.add_theme_font_size_override("font_size", 16)
-		btn.text = "%s %s" % [str(spec.get("icon", "")), str(spec.get("name", kind))]
+		btn.custom_minimum_size = Vector2(0.0, 58.0)
+		btn.add_theme_font_size_override("font_size", 14)
+		btn.text = "[%s] %s" % [str(KIND_CODES.get(kind, "DF")), str(spec.get("name", kind))]
 		var cap_k: String = kind
 		btn.pressed.connect(func(): structure_selected.emit(cap_k))
 		row.add_child(btn)
@@ -121,8 +126,8 @@ func _build_ui() -> void:
 
 	var close_btn: Button = Button.new()
 	close_btn.focus_mode = Control.FOCUS_NONE
-	close_btn.custom_minimum_size = Vector2(96.0, 62.0)
-	close_btn.add_theme_font_size_override("font_size", 16)
-	close_btn.text = "✕ 取消\n[Esc]"
+	close_btn.custom_minimum_size = Vector2(96.0, 58.0)
+	close_btn.add_theme_font_size_override("font_size", 14)
+	close_btn.text = "EXIT\n[ESC]"
 	close_btn.pressed.connect(func(): set_open(false))
 	row.add_child(close_btn)

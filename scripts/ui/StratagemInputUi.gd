@@ -9,10 +9,10 @@ signal sequence_cancelled(target: Dictionary)
 const DIRS: Array[String] = ["up", "down", "left", "right"]
 
 const DIR_GLYPHS: Dictionary = {
-	"up": "⬆",
-	"down": "⬇",
-	"left": "⬅",
-	"right": "➡",
+	"up": "▲",
+	"down": "▼",
+	"left": "◀",
+	"right": "▶",
 }
 
 const DIR_KEYS_HINT: Dictionary = {
@@ -92,7 +92,6 @@ func start_sequence(target: Dictionary, seed_hint: int = 0, forced_sequence: Arr
 			rng.randomize()
 		for i in range(seq_len):
 			var pick: String = DIRS[rng.randi_range(0, DIRS.size() - 1)]
-			# Avoid 3 identical consecutive arrows so patterns feel rhythmic and fun
 			if i >= 2 and sequence[i - 1] == pick and sequence[i - 2] == pick:
 				pick = DIRS[(DIRS.find(pick) + rng.randi_range(1, 3)) % DIRS.size()]
 			sequence.append(pick)
@@ -105,9 +104,9 @@ func start_sequence(target: Dictionary, seed_hint: int = 0, forced_sequence: Arr
 
 	_rebuild_arrow_tiles()
 	if _title_label != null:
-		_title_label.text = "⚡ 快速指令互動：%s" % str(active_target.get("label", "物件"))
+		_title_label.text = "UPLINK // 指令序列：%s" % str(active_target.get("label", "TARGET"))
 	if _subtitle_label != null:
-		_subtitle_label.text = "依序輸入 WASD 或 ↑↓←→（Space 緊急翻滾中斷 ｜ Esc 取消）"
+		_subtitle_label.text = "INPUT: WASD / ARROWS  |  [SPACE] EMERGENCY ROLL  |  [ESC] ABORT"
 	_set_panel_visible(true)
 	return sequence.duplicate()
 
@@ -166,19 +165,6 @@ func _process(delta: float) -> void:
 				_refresh_tile_styles()
 
 
-func _make_style(bg: Color, border: Color, radius: int = 8, border_w: int = 2) -> StyleBoxFlat:
-	var sb: StyleBoxFlat = StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(border_w)
-	sb.set_corner_radius_all(radius)
-	sb.content_margin_left = 14
-	sb.content_margin_right = 14
-	sb.content_margin_top = 10
-	sb.content_margin_bottom = 10
-	return sb
-
-
 func _build_ui() -> void:
 	var root: Control = Control.new()
 	root.name = "StratagemRoot"
@@ -190,10 +176,10 @@ func _build_ui() -> void:
 	_panel.name = "StratagemPanel"
 	_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	_panel.offset_left = _base_offset_left
-	_panel.offset_top = -316.0
+	_panel.offset_top = -312.0
 	_panel.offset_right = _base_offset_right
 	_panel.offset_bottom = -168.0
-	_panel.add_theme_stylebox_override("panel", _make_style(Color(0.16, 0.12, 0.09, 0.96), Color(0.95, 0.74, 0.30, 0.96), 12, 3))
+	_panel.add_theme_stylebox_override("panel", TacticalTheme.make_accent_card_style(TacticalTheme.BG_PANEL_DEEP, TacticalTheme.ACCENT_CYAN, 3, 16, 12))
 	root.add_child(_panel)
 
 	var vbox: VBoxContainer = VBoxContainer.new()
@@ -203,19 +189,19 @@ func _build_ui() -> void:
 
 	_title_label = Label.new()
 	_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_title_label.add_theme_font_size_override("font_size", 19)
-	_title_label.add_theme_color_override("font_color", Color(1.0, 0.90, 0.56))
+	_title_label.add_theme_font_size_override("font_size", 16)
+	_title_label.add_theme_color_override("font_color", TacticalTheme.ACCENT_CYAN)
 	vbox.add_child(_title_label)
 
 	_arrows_row = HBoxContainer.new()
 	_arrows_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_arrows_row.add_theme_constant_override("separation", 12)
+	_arrows_row.add_theme_constant_override("separation", 10)
 	vbox.add_child(_arrows_row)
 
 	_subtitle_label = Label.new()
 	_subtitle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_subtitle_label.add_theme_font_size_override("font_size", 15)
-	_subtitle_label.add_theme_color_override("font_color", Color(0.88, 0.84, 0.74))
+	_subtitle_label.add_theme_font_size_override("font_size", 12)
+	_subtitle_label.add_theme_color_override("font_color", TacticalTheme.TEXT_SECONDARY)
 	vbox.add_child(_subtitle_label)
 
 
@@ -237,7 +223,7 @@ func _rebuild_arrow_tiles() -> void:
 
 	for d: String in sequence:
 		var box: PanelContainer = PanelContainer.new()
-		box.custom_minimum_size = Vector2(64.0, 62.0)
+		box.custom_minimum_size = Vector2(58.0, 56.0)
 		_arrows_row.add_child(box)
 		_tile_boxes.append(box)
 
@@ -245,7 +231,7 @@ func _rebuild_arrow_tiles() -> void:
 		lbl.text = str(DIR_GLYPHS.get(d, "?"))
 		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		lbl.add_theme_font_size_override("font_size", 30)
+		lbl.add_theme_font_size_override("font_size", 24)
 		box.add_child(lbl)
 		_tile_labels.append(lbl)
 
@@ -258,17 +244,14 @@ func _refresh_tile_styles() -> void:
 		var box: PanelContainer = _tile_boxes[i]
 		var lbl: Label = _tile_labels[i]
 		if is_err:
-			box.add_theme_stylebox_override("panel", _make_style(Color(0.50, 0.14, 0.12, 0.96), Color(1.0, 0.36, 0.28, 1.0), 8, 2))
-			lbl.add_theme_color_override("font_color", Color(1.0, 0.82, 0.78))
+			box.add_theme_stylebox_override("panel", TacticalTheme.make_panel_style(Color(0.28, 0.06, 0.07, 0.96), TacticalTheme.ACCENT_CRIMSON, 1, 6, 4, 1))
+			lbl.add_theme_color_override("font_color", TacticalTheme.ACCENT_CRIMSON)
 		elif i < current_index:
-			# Completed arrow — bright emerald & gold!
-			box.add_theme_stylebox_override("panel", _make_style(Color(0.16, 0.42, 0.24, 0.98), Color(0.45, 0.98, 0.64, 1.0), 8, 2))
-			lbl.add_theme_color_override("font_color", Color(0.62, 1.0, 0.74))
+			box.add_theme_stylebox_override("panel", TacticalTheme.make_panel_style(Color(0.06, 0.22, 0.16, 0.96), TacticalTheme.ACCENT_EMERALD, 1, 6, 4, 1))
+			lbl.add_theme_color_override("font_color", TacticalTheme.ACCENT_EMERALD)
 		elif i == current_index:
-			# Current active arrow — bright amber/gold focus!
-			box.add_theme_stylebox_override("panel", _make_style(Color(0.62, 0.36, 0.12, 0.98), Color(1.0, 0.88, 0.36, 1.0), 8, 3))
-			lbl.add_theme_color_override("font_color", Color(1.0, 0.98, 0.86))
+			box.add_theme_stylebox_override("panel", TacticalTheme.make_panel_style(Color(0.22, 0.15, 0.04, 0.98), TacticalTheme.ACCENT_AMBER, 2, 6, 4, 1))
+			lbl.add_theme_color_override("font_color", TacticalTheme.ACCENT_AMBER)
 		else:
-			# Pending arrow
-			box.add_theme_stylebox_override("panel", _make_style(Color(0.22, 0.18, 0.14, 0.94), Color(0.56, 0.46, 0.32, 0.85), 8, 2))
-			lbl.add_theme_color_override("font_color", Color(0.92, 0.88, 0.78))
+			box.add_theme_stylebox_override("panel", TacticalTheme.make_panel_style(TacticalTheme.BG_CARD, TacticalTheme.BORDER_STEEL, 1, 6, 4, 1))
+			lbl.add_theme_color_override("font_color", TacticalTheme.TEXT_SECONDARY)

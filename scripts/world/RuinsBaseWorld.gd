@@ -18,7 +18,10 @@ var armored_train: ArmoredTrainBase = null
 var loot_stash_manager: LootStashManager = null
 var train_consist: TrainConsistManager = null
 var train_blueprint_ui: TrainBlueprintUi = null
+var train_helm_ui: TrainHelmUi = null
 var horde_manager: HordeManager = null
+var day_night_manager: DayNightCycleManager = null
+var expedition_manager: ExpeditionManager = null
 var mission_director: MissionDirector = null
 var meta_progression: MetaProgressionManager = null
 var run_flow_overlay: RunFlowOverlay = null
@@ -27,6 +30,10 @@ var build_manager: BuildDefenseManager = null
 var build_menu_ui: BuildMenuUi = null
 var context_menu_ui: ContextMenuUi = null
 var dev_cheat_ui: DevCheatUi = null
+
+var _world_env: WorldEnvironment = null
+var _sun_light: DirectionalLight3D = null
+var _fill_light: DirectionalLight3D = null
 
 var quickbelt_slots: Array[Dictionary] = []
 var current_seed: int = SquadConfig.DEFAULT_SECTOR_SEED
@@ -69,28 +76,28 @@ func _setup_retro_urban_environment() -> void:
 
 	var sky: Sky = Sky.new()
 	var sky_mat: ProceduralSkyMaterial = ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.20, 0.24, 0.34)
-	sky_mat.sky_horizon_color = Color(0.66, 0.54, 0.48)
-	sky_mat.ground_bottom_color = Color(0.14, 0.14, 0.17)
-	sky_mat.ground_horizon_color = Color(0.36, 0.32, 0.32)
+	sky_mat.sky_top_color = Color(0.10, 0.14, 0.21)
+	sky_mat.sky_horizon_color = Color(0.28, 0.35, 0.44)
+	sky_mat.ground_bottom_color = Color(0.08, 0.10, 0.13)
+	sky_mat.ground_horizon_color = Color(0.18, 0.22, 0.27)
 	sky.sky_material = sky_mat
 	env.sky = sky
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.22, 0.23, 0.28)
+	env.background_color = Color(0.13, 0.16, 0.21)
 
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.58, 0.62, 0.74)
+	env.ambient_light_color = Color(0.48, 0.58, 0.72)
 	env.ambient_light_energy = 0.85
 
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 1.06
+	env.tonemap_exposure = 1.04
 	env.glow_enabled = true
-	env.glow_intensity = 0.36
-	env.glow_bloom = 0.12
+	env.glow_intensity = 0.34
+	env.glow_bloom = 0.10
 
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.42, 0.40, 0.46)
-	env.fog_density = 0.0045
+	env.fog_light_color = Color(0.26, 0.32, 0.40)
+	env.fog_density = 0.0042
 	env.fog_sky_affect = 0.2
 
 	we.environment = env
@@ -98,21 +105,25 @@ func _setup_retro_urban_environment() -> void:
 
 	var sun: DirectionalLight3D = DirectionalLight3D.new()
 	sun.name = "UrbanSunLight"
-	sun.light_color = Color(1.0, 0.87, 0.72)
-	sun.light_energy = 1.95
+	sun.light_color = Color(0.90, 0.94, 1.0)
+	sun.light_energy = 1.80
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 195.0
 	sun.shadow_bias = 0.03
-	sun.rotation_degrees = Vector3(-44.0, -32.0, 0.0)
+	sun.rotation_degrees = Vector3(-46.0, -32.0, 0.0)
 	add_child(sun)
 
 	var fill: DirectionalLight3D = DirectionalLight3D.new()
 	fill.name = "SkyFillLight"
-	fill.light_color = Color(0.58, 0.70, 0.92)
-	fill.light_energy = 0.55
+	fill.light_color = Color(0.46, 0.64, 0.88)
+	fill.light_energy = 0.62
 	fill.shadow_enabled = false
 	fill.rotation_degrees = Vector3(-35.0, 145.0, 0.0)
 	add_child(fill)
+
+	_world_env = we
+	_sun_light = sun
+	_fill_light = fill
 
 
 func _setup_all_systems() -> void:
@@ -153,7 +164,22 @@ func _setup_all_systems() -> void:
 	horde_manager.connect_attack_handlers(_on_zombie_attacked_player, _on_zombie_attacked_train)
 	horde_manager.wave_stage_changed.connect(_on_wave_stage_changed)
 	horde_manager.zombie_killed.connect(_on_zombie_killed)
+	horde_manager.elite_loot_dropped.connect(_on_elite_loot_dropped)
 	horde_manager.overtime_triggered.connect(_on_overtime_triggered)
+
+	day_night_manager = DayNightCycleManager.new()
+	day_night_manager.name = "DayNightCycleManager"
+	env_root.add_child(day_night_manager)
+	day_night_manager.phase_changed.connect(_on_day_night_phase_changed)
+	day_night_manager.day_changed.connect(_on_day_night_day_changed)
+	day_night_manager.random_event_triggered.connect(_on_blood_moon_random_event)
+
+	expedition_manager = ExpeditionManager.new()
+	expedition_manager.name = "ExpeditionManager"
+	env_root.add_child(expedition_manager)
+	expedition_manager.facility_power_changed.connect(_on_facility_power_changed)
+	expedition_manager.facility_yield_granted.connect(_on_facility_yield_granted)
+	expedition_manager.blockade_cleared.connect(_on_blockade_cleared)
 
 	mission_director = MissionDirector.new()
 	mission_director.name = "MissionDirector"
@@ -251,6 +277,7 @@ func _setup_hud_and_overlays() -> void:
 	hud.quickbelt_slot_requested.connect(func(idx: int): use_quickbelt_slot(idx))
 	hud.weapon_slot_requested.connect(func(idx: int): switch_player_weapon(idx))
 	hud.cheat_panel_requested.connect(_on_toggle_dev_cheat_ui)
+	hud.flashlight_toggle_requested.connect(_on_flashlight_toggle_requested)
 	hud.set_active_character(active_index)
 	hud.set_camera_locked(camera_rig.camera_locked)
 	hud.set_camera_orthographic(camera_rig.is_orthographic)
@@ -288,6 +315,14 @@ func _setup_hud_and_overlays() -> void:
 	stratagem_ui.sequence_completed.connect(_on_stratagem_completed)
 	stratagem_ui.sequence_cancelled.connect(_on_stratagem_cancelled)
 
+	train_helm_ui = TrainHelmUi.new()
+	train_helm_ui.name = "TrainHelmUi"
+	add_child(train_helm_ui)
+	train_helm_ui.setup()
+	train_helm_ui.drive_requested.connect(_on_train_drive_requested)
+	train_helm_ui.depart_requested.connect(depart_to_next_sector)
+	train_helm_ui.closed.connect(_on_train_helm_closed)
+
 	build_menu_ui = BuildMenuUi.new()
 	build_menu_ui.name = "BuildMenuUi"
 	add_child(build_menu_ui)
@@ -313,6 +348,11 @@ func _setup_hud_and_overlays() -> void:
 	dev_cheat_ui.grant_resources_requested.connect(_on_cheat_grant_resources)
 	dev_cheat_ui.spawn_demo_fortifications_requested.connect(_on_cheat_spawn_demo_fortifications)
 	dev_cheat_ui.avatar_selected.connect(_on_cheat_switch_avatar)
+	dev_cheat_ui.phase_selected.connect(_on_cheat_set_phase)
+	dev_cheat_ui.next_day_requested.connect(_on_cheat_next_day)
+	dev_cheat_ui.blood_moon_delta_requested.connect(_on_cheat_blood_moon_delta)
+	dev_cheat_ui.blood_moon_random_event_requested.connect(_on_cheat_blood_moon_random_event)
+	dev_cheat_ui.spawn_blood_elite_requested.connect(_on_cheat_spawn_blood_elite)
 
 
 func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: int = -1) -> Dictionary:
@@ -328,13 +368,20 @@ func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: in
 	var dock_pos: Vector3 = dock_raw if dock_raw is Vector3 else SquadConfig.TRAIN_POSITION
 	if armored_train != null:
 		armored_train.position = dock_pos
+		armored_train.set_rail_throttle(0)
+		armored_train.sync_tracks_world_anchor()
+		armored_train.set_night_lighting(false)
 		armored_train.reset_hull()
+
+	if day_night_manager != null:
+		day_night_manager.reset(seed_value)
+		day_night_manager.apply_environment_lighting(_world_env, _sun_light, _fill_light)
 
 	var bounds_raw: Variant = sector_data.get("world_bounds", SquadConfig.active_playable_bounds)
 	var bounds: Rect2 = bounds_raw if bounds_raw is Rect2 else SquadConfig.active_playable_bounds
 	SquadConfig.set_playable_bounds(bounds)
 	if camera_rig != null:
-		camera_rig.set_focus_bounds(Rect2(bounds.position.x - 4.0, dock_pos.z - 6.0, bounds.size.x + 8.0, (bounds.end.y - dock_pos.z) + 10.0))
+		camera_rig.set_focus_bounds(bounds.grow(4.0))
 
 	if loot_stash_manager != null:
 		if reset_stash:
@@ -343,8 +390,14 @@ func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: in
 
 	if build_manager != null:
 		build_manager.clear_all_structures()
+	if expedition_manager != null:
+		expedition_manager.reset_for_sector(1 if reset_stash else expedition_manager.sector_index, bounds, sector_generator.rail_z, seed_value, not reset_stash)
+		if armored_train != null:
+			expedition_manager.update_train_coupling(armored_train)
 	if build_menu_ui != null:
 		build_menu_ui.set_open(false)
+	if train_helm_ui != null:
+		train_helm_ui.set_open(false)
 	if context_menu_ui != null:
 		context_menu_ui.close()
 
@@ -357,6 +410,8 @@ func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: in
 		active.global_position = spawn_pos
 		active.clear_showcase_override()
 		active.reset_combat_state()
+		active.reset_flashlight_auto()
+		active.set_night_flashlight(false)
 		active.god_mode = cheat_god_mode
 		active.infinite_ammo = cheat_infinite_resources
 		if camera_rig != null:
@@ -373,6 +428,8 @@ func generate_new_sector(seed_value: int, reset_stash: bool = true, tier_num: in
 			float(tier_cfg.get("duration_sec", 360.0)),
 			float(tier_cfg.get("difficulty_mult", 1.0))
 		)
+		if sector_generator != null:
+			horde_manager.spawn_daytime_roamers(sector_generator.civil_houses, 6)
 
 	if mission_director != null:
 		var crew_ids: Array[String] = []
@@ -562,6 +619,65 @@ func _on_cheat_spawn_demo_fortifications() -> void:
 		hud.push_status("🧱 [DEV CHEAT] 已於角色前方部署全套 %d 種示範工事（沙袋／拒馬／地雷／砲台）！" % cnt)
 
 
+func _on_cheat_set_phase(phase: int) -> void:
+	if day_night_manager == null:
+		return
+	day_night_manager.force_phase(phase)
+	if hud != null:
+		hud.push_status("🕒 [DEV CHEAT] 已切換時段至：%s（DAY %d）" % [day_night_manager.get_phase_label(), day_night_manager.current_day])
+	_sync_hud_state()
+
+
+func _on_cheat_next_day() -> void:
+	if day_night_manager == null:
+		return
+	var next_d: int = day_night_manager.current_day + 1
+	if expedition_manager != null and armored_train != null:
+		expedition_manager.update_train_coupling(armored_train)
+	if hud != null:
+		hud.push_status("📅 [DEV CHEAT] 已跳轉至第 %d 天（怪物強度倍率 x%.2f）" % [
+			next_d,
+			horde_manager.get_day_hp_multiplier() if horde_manager != null else 1.0,
+		])
+	day_night_manager.force_phase(day_night_manager.current_phase, next_d, 0.0)
+	if horde_manager != null:
+		horde_manager.set_day_night_state(day_night_manager.current_phase, day_night_manager.current_day)
+	_sync_hud_state()
+
+
+func _on_cheat_blood_moon_delta(delta_bm: float) -> void:
+	if day_night_manager == null:
+		return
+	day_night_manager.add_blood_moon_pressure(delta_bm, "dev_cheat")
+	if delta_bm < 0.0 and day_night_manager.blood_moon_value <= 0.01:
+		day_night_manager.next_night_blood_moon = false
+	if hud != null:
+		hud.push_status("🩸 [DEV CHEAT] 血月計量條調整為 %d%%" % int(round(day_night_manager.blood_moon_value)))
+	_sync_hud_state()
+
+
+func _on_cheat_blood_moon_random_event() -> void:
+	if day_night_manager == null:
+		return
+	day_night_manager._roll_random_anomaly_event()
+	_sync_hud_state()
+
+
+func _on_cheat_spawn_blood_elite() -> void:
+	if horde_manager == null:
+		return
+	var active: SquadCharacter = get_active_character()
+	var origin: Vector3 = active.global_position if active != null else Vector3(0.0, 0.0, 4.0)
+	var spawn_pos: Vector3 = origin + Vector3(5.5, 0.0, 5.5)
+	if sector_generator != null:
+		spawn_pos.x = clampf(spawn_pos.x, sector_generator.world_bounds.position.x + 2.0, sector_generator.world_bounds.end.x - 2.0)
+		spawn_pos.z = clampf(spawn_pos.z, sector_generator.world_bounds.position.y + 2.0, sector_generator.world_bounds.end.y - 2.0)
+	var ez: ZombieUnit = horde_manager.spawn_zombie("blood_elite", spawn_pos)
+	if hud != null:
+		hud.push_status("🩸 [DEV CHEAT] 已於附近生成血月獵殺者精英！" if ez != null else "⚠️ 喪屍物件池已滿，請先清除喪屍")
+	_refresh_minimap()
+
+
 func _throw_frag_grenade(from_pos: Vector3, target_pos: Vector3) -> void:
 	var to_t: Vector3 = Vector3(target_pos.x - from_pos.x, 0.0, target_pos.z - from_pos.z)
 	if to_t.length() > 14.0:
@@ -604,6 +720,8 @@ func finish_run(victory: bool, fail_reason: String = "") -> Dictionary:
 		stratagem_ui.cancel()
 	if build_menu_ui != null:
 		build_menu_ui.set_open(false)
+	if train_helm_ui != null:
+		train_helm_ui.set_open(false)
 	if context_menu_ui != null:
 		context_menu_ui.close()
 	if horde_manager != null:
@@ -709,19 +827,25 @@ func open_context_menu_at(screen_pos: Vector2, world_pos: Vector3) -> Array[Dict
 	# 3. Check Deployed Field Structure near right-click
 	if options.is_empty() and build_manager != null:
 		var st: Dictionary = build_manager.find_nearest_structure(world_pos, 2.6)
-		if not st.is_empty():
+		if st.is_empty() and sector_generator != null:
+			var win: Dictionary = sector_generator.find_nearest_house_window(world_pos, 2.8, true)
+			if not win.is_empty():
+				title = "🪟 民宅窗戶"
+				options.append({"id": "board_window", "label": "🪵 封固窗戶（封窗木板，需金屬1）", "payload": {"window": win, "pos": win["pos"]}})
+		elif not st.is_empty():
 			title = "🧱 %s（耐久 %d/%d）" % [str(st["name"]), int(round(float(st["hp"]))), int(round(float(st["max_hp"])))]
 			options.append({"id": "repair_defense", "label": "🔧 修復此工事（消耗 1 金屬）", "payload": {"sid": str(st["id"]), "pos": st["pos"]}})
-			options.append({"id": "dismantle_defense", "label": "♻️ 拆除並回收廢金屬", "payload": {"sid": str(st["id"]), "pos": st["pos"]}})
+			options.append({"id": "dismantle_defense", "label": "♻️ 換點拆遷回收（返還材料）", "payload": {"sid": str(st["id"]), "pos": st["pos"]}})
 
 	# 4. Check Armored Train Platform / Zones near right-click
 	if options.is_empty() and armored_train != null:
-		var near_train: bool = world_pos.z <= armored_train.position.z + 5.6 or armored_train.is_player_in_boarding_zone(world_pos) or armored_train.is_player_in_stash_zone(world_pos)
+		var near_train: bool = absf(world_pos.z - armored_train.position.z) <= 5.8 or armored_train.is_player_in_boarding_zone(world_pos) or armored_train.is_player_in_stash_zone(world_pos)
 		if near_train:
 			title = "🚂 裝甲列車基地"
 			var stash_target: Dictionary = {"id": "train_stash", "kind": "train_stash", "label": "裝甲列車暫存倉", "pos": armored_train.get_stash_world_pos()}
 			options.append({"id": "interact_target", "label": "📦 卸貨至列車暫存倉（3 鍵指令）", "payload": {"target": stash_target}})
 			options.append({"id": "open_blueprint", "label": "🚂 開啟蒸氣列車設計圖 [T]", "payload": {}})
+			options.append({"id": "open_helm", "label": "🎛 前往鍋爐室操作駕駛台 [F]", "payload": {"pos": armored_train.get_helm_world_pos()}})
 			if mission_director != null and mission_director.is_mission_complete and not mission_director.is_extracting:
 				var ext_target: Dictionary = {"id": "boarding_zone", "kind": "boarding_extract", "label": "啟動裝甲列車鍋爐撤離", "pos": armored_train.get_boarding_world_pos()}
 				options.append({"id": "interact_target", "label": "🔥 啟動鍋爐發車撤離（6 鍵指令）", "payload": {"target": ext_target}})
@@ -763,7 +887,7 @@ func _on_context_menu_action(action_id: String, payload: Dictionary) -> void:
 		"inspect_mission":
 			if hud != null and mission_director != null:
 				hud.push_status("🔍 %s" % mission_director.get_mission_hud_text())
-		"interact_target", "repair_defense", "dismantle_defense", "repair_train_field":
+		"interact_target", "repair_defense", "dismantle_defense", "repair_train_field", "open_helm", "board_window":
 			var target_pos: Vector3 = payload.get("pos", Vector3.ZERO) as Vector3
 			if action_id == "interact_target":
 				var t: Dictionary = payload.get("target", {}) as Dictionary
@@ -782,6 +906,16 @@ func _on_context_menu_action(action_id: String, payload: Dictionary) -> void:
 func _execute_context_action_immediately(action_id: String, payload: Dictionary) -> void:
 	var active: SquadCharacter = get_active_character()
 	match action_id:
+		"open_helm":
+			_try_open_train_helm()
+		"board_window":
+			if build_manager != null and loot_stash_manager != null and sector_generator != null:
+				var w_dict: Dictionary = payload.get("window", {}) as Dictionary
+				var res: Dictionary = build_manager.barricade_house_window(w_dict, sector_generator.world_bounds, loot_stash_manager.backpack, loot_stash_manager.train_stash)
+				if hud != null:
+					hud.push_status(str(res.get("message", "")))
+				_sync_hud_state()
+				_refresh_minimap()
 		"interact_target":
 			var target: Dictionary = payload.get("target", {}) as Dictionary
 			_begin_stratagem_for_target(target)
@@ -898,8 +1032,45 @@ func _sync_hud_state() -> void:
 	hud.update_cheat_status(cheat_god_mode, cheat_infinite_resources, cheat_pause_spawns)
 	if dev_cheat_ui != null:
 		dev_cheat_ui.sync_states(cheat_god_mode, cheat_infinite_resources, cheat_pause_spawns)
+		if day_night_manager != null:
+			dev_cheat_ui.sync_day_night(
+				day_night_manager.current_phase,
+				day_night_manager.current_day,
+				day_night_manager.blood_moon_value,
+				day_night_manager.is_blood_moon_warning()
+			)
 	if horde_manager != null:
 		hud.update_run_timer(horde_manager.time_remaining, horde_manager.current_stage_name, horde_manager.total_kills, horde_manager.get_active_zombie_count())
+	if day_night_manager != null and armored_train != null:
+		var fl_on: bool = active.is_flashlight_on() if active != null else day_night_manager.is_night_lights_active()
+		hud.update_day_night_and_train(
+			day_night_manager.current_phase,
+			day_night_manager.current_day,
+			day_night_manager.get_phase_remaining(),
+			day_night_manager.get_phase_progress(),
+			day_night_manager.is_train_mobile(),
+			fl_on,
+			day_night_manager.blood_moon_value,
+			day_night_manager.is_blood_moon_warning()
+		)
+		if train_helm_ui != null:
+			var dchk: Dictionary = expedition_manager.check_departure_requirements(
+				day_night_manager.is_train_mobile(),
+				loot_stash_manager.backpack if loot_stash_manager != null else {},
+				loot_stash_manager.train_stash if loot_stash_manager != null else {},
+				cheat_infinite_resources
+			) if expedition_manager != null else {}
+			train_helm_ui.refresh(
+				day_night_manager.current_phase,
+				day_night_manager.get_clock_text(),
+				day_night_manager.is_train_mobile(),
+				armored_train.rail_throttle,
+				armored_train.position.x,
+				armored_train.hull_hp,
+				armored_train.max_hull_hp,
+				expedition_manager.sector_index if expedition_manager != null else 1,
+				dchk
+			)
 	if mission_director != null and active != null and armored_train != null:
 		hud.update_mission_status(mission_director.get_mission_hud_text(), mission_director.get_compass_hint(active.global_position, armored_train.get_boarding_world_pos()))
 	if train_blueprint_ui != null and meta_progression != null:
@@ -937,6 +1108,10 @@ func _refresh_minimap() -> void:
 	hud.update_minimap({
 		"bounds": sector_generator.world_bounds,
 		"cross_road_x": sector_generator.cross_road_x,
+		"rail_z": sector_generator.rail_z,
+		"north_road_z": sector_generator.north_road_z,
+		"south_road_z": sector_generator.south_road_z,
+		"house_footprints": sector_generator.get_house_footprints(),
 		"player_pos": active.global_position if active != null else Vector3.ZERO,
 		"player_yaw": active.get_facing_yaw() if active != null else 0.0,
 		"train_pos": armored_train.position if armored_train != null else SquadConfig.TRAIN_POSITION,
@@ -949,6 +1124,11 @@ func _refresh_minimap() -> void:
 		"survivor_pos": surv_p,
 		"zombie_positions": z_pos,
 		"defense_markers": build_manager.get_minimap_markers() if build_manager != null else [],
+		"has_facility": expedition_manager != null,
+		"facility_pos": expedition_manager.facility_pos if expedition_manager != null else Vector3.ZERO,
+		"facility_powered": expedition_manager.facility_powered if expedition_manager != null else false,
+		"has_blockade": expedition_manager != null and not expedition_manager.rail_barricade_cleared,
+		"blockade_pos": expedition_manager.blockade_pos if expedition_manager != null else Vector3.ZERO,
 	})
 
 
@@ -958,6 +1138,7 @@ func _apply_train_consist_to_world() -> void:
 	var stats: Dictionary = train_consist.compute_stats()
 	if armored_train != null:
 		armored_train.apply_consist(train_consist)
+		armored_train.sync_tracks_world_anchor()
 	if loot_stash_manager != null:
 		loot_stash_manager.backpack_capacity = int(stats.get("backpack_capacity", 12))
 	_sync_hud_state()
@@ -1009,6 +1190,12 @@ func _on_extraction_succeeded() -> void:
 func _on_player_shot_fired(muzzle_pos: Vector3, shot_dir: Vector3, damage: float) -> void:
 	if horde_manager != null and run_active:
 		horde_manager.damage_zombies_along_ray(muzzle_pos, shot_dir, 18.5, damage)
+		var active: SquadCharacter = get_active_character()
+		var is_suppressed: bool = active != null and active.supports_silencer and active.silencer_attached
+		var noise_radius: float = 7.5 if is_suppressed else 22.0
+		horde_manager.emit_gunshot_noise(muzzle_pos, noise_radius)
+		if day_night_manager != null:
+			day_night_manager.add_blood_moon_pressure(0.25 if is_suppressed else 1.8, "gunshot")
 
 
 func _on_player_hp_changed(_hp: float, _max_hp: float) -> void:
@@ -1058,7 +1245,38 @@ func _on_wave_stage_changed(_stage: int, stage_name: String) -> void:
 		hud.push_status("⚠️ 威脅升級：%s" % stage_name)
 
 
-func _on_zombie_killed(_arch: String, _kills: int, _pos: Vector3) -> void:
+func _on_zombie_killed(arch: String, _kills: int, _pos: Vector3) -> void:
+	if day_night_manager != null and run_active:
+		day_night_manager.add_blood_moon_pressure(4.0 if arch == "blood_elite" else 1.2, "kill")
+	_sync_hud_state()
+
+
+func _on_elite_loot_dropped(_arch: String, _death_pos: Vector3, bonus_resources: Dictionary, mod_cores: int) -> void:
+	if meta_progression != null and mod_cores > 0:
+		meta_progression.grant_modification_cores(mod_cores)
+	if loot_stash_manager != null:
+		for k: String in LootStashManager.RESOURCE_ORDER:
+			var amt: int = int(bonus_resources.get(k, 0))
+			if amt <= 0:
+				continue
+			var free_cap: int = loot_stash_manager.get_backpack_free()
+			var to_bag: int = mini(amt, free_cap)
+			if to_bag > 0:
+				loot_stash_manager.backpack[k] = int(loot_stash_manager.backpack.get(k, 0)) + to_bag
+			var overflow: int = amt - to_bag
+			if overflow > 0:
+				loot_stash_manager.train_stash[k] = int(loot_stash_manager.train_stash.get(k, 0)) + overflow
+	if hud != null:
+		hud.push_status("🩸 擊殺血月精英！取得改裝核心 x%d 與高階零件燃料（總核心：%d）" % [
+			mod_cores,
+			meta_progression.modification_cores if meta_progression != null else mod_cores,
+		])
+	_sync_hud_state()
+
+
+func _on_blood_moon_random_event(title: String, _delta_bm: float) -> void:
+	if hud != null:
+		hud.push_status("🌀 %s" % title)
 	_sync_hud_state()
 
 
@@ -1171,6 +1389,25 @@ func _begin_stratagem_for_target(target: Dictionary) -> void:
 		return
 
 	var kind: String = str(target.get("kind", ""))
+	if kind == "train_helm":
+		_try_open_train_helm()
+		return
+	if kind == "holdout_facility" and expedition_manager != null:
+		expedition_manager.update_train_coupling(armored_train)
+		if hud != null:
+			if expedition_manager.facility_powered:
+				hud.push_status("⚡ 大型精煉站已連接列車供電（已連續供能 %d 日）— 黎明結算高階零件／燃料與改造核心" % expedition_manager.consecutive_powered_days)
+			else:
+				hud.push_status("🔌 請於白天將裝甲列車駛入距離精煉站 %.0fm 內以接通供電" % ExpeditionManager.FACILITY_POWER_RANGE)
+		return
+	if kind == "house_window" and build_manager != null and loot_stash_manager != null and sector_generator != null:
+		var w_ref: Dictionary = target.get("window", {}) as Dictionary
+		var w_res: Dictionary = build_manager.barricade_house_window(w_ref, sector_generator.world_bounds, loot_stash_manager.backpack, loot_stash_manager.train_stash)
+		if hud != null:
+			hud.push_status(str(w_res.get("message", "")))
+		_sync_hud_state()
+		_refresh_minimap()
+		return
 	if kind == "loot" and loot_stash_manager != null and loot_stash_manager.get_backpack_free() <= 0:
 		if hud != null:
 			hud.push_status("⚠️ 隨身背包已滿（%d/%d），請先返回北方【裝甲列車暫存倉】卸貨！" % [
@@ -1205,6 +1442,13 @@ func _begin_stratagem_for_target(target: Dictionary) -> void:
 func _resolve_interaction_target(target: Dictionary, char_id: String, station_label: String, elapsed_sec: float) -> void:
 	var speed_tag: String = ("（⚡ %.2fs 完成）" % elapsed_sec) if elapsed_sec > 0.0 else ""
 	var kind: String = str(target.get("kind", ""))
+
+	if kind == "rail_blockade" and expedition_manager != null:
+		if expedition_manager.clear_rail_blockade():
+			if hud != null:
+				hud.push_status("🚧 已清除東側鐵軌路障%s！備妥燃料即可從鍋爐操縱台發車遠征！" % speed_tag)
+		_sync_hud_state()
+		return
 
 	if kind == "mission_objective" and mission_director != null:
 		var mres: Dictionary = mission_director.complete_objective(str(target.get("id", "")))
@@ -1351,6 +1595,10 @@ func _input(event: InputEvent) -> void:
 				build_menu_ui.set_open(false)
 				get_viewport().set_input_as_handled()
 				return
+			if train_helm_ui != null and train_helm_ui.is_open():
+				train_helm_ui.set_open(false)
+				get_viewport().set_input_as_handled()
+				return
 			if stratagem_ui != null and stratagem_ui.is_active:
 				stratagem_ui.cancel()
 				get_viewport().set_input_as_handled()
@@ -1371,6 +1619,25 @@ func _input(event: InputEvent) -> void:
 			build_manager.rotate_placement(45.0)
 			get_viewport().set_input_as_handled()
 			return
+
+		# Intercept Helm Console inputs while operating Locomotive Throttle Console
+		if train_helm_ui != null and train_helm_ui.is_open():
+			if code == KEY_F or code == KEY_E:
+				train_helm_ui.set_open(false)
+				get_viewport().set_input_as_handled()
+				return
+			if code == KEY_A or code == KEY_LEFT:
+				_on_train_drive_requested(-1)
+				get_viewport().set_input_as_handled()
+				return
+			if code == KEY_D or code == KEY_RIGHT:
+				_on_train_drive_requested(1)
+				get_viewport().set_input_as_handled()
+				return
+			if code == KEY_S or code == KEY_SPACE:
+				_on_train_drive_requested(0)
+				get_viewport().set_input_as_handled()
+				return
 
 		# Intercept Stratagem inputs BEFORE Godot GUI focus navigation
 		if stratagem_ui != null and stratagem_ui.is_active:
@@ -1429,9 +1696,166 @@ func _input(event: InputEvent) -> void:
 				if active_s != null and active_s.toggle_silencer() and hud != null:
 					hud.push_status("🔇 正在安裝消音器..." if not active_s.silencer_attached else "🔊 正在拆下消音器...")
 				get_viewport().set_input_as_handled()
+			KEY_L:
+				_on_flashlight_toggle_requested()
+				get_viewport().set_input_as_handled()
 			KEY_F5:
 				_on_regenerate_sector_requested()
 				get_viewport().set_input_as_handled()
+
+
+func _try_open_train_helm() -> bool:
+	if train_helm_ui == null or armored_train == null or not run_active:
+		return false
+	var active: SquadCharacter = get_active_character()
+	if active == null or active.is_dead:
+		return false
+	if not armored_train.is_player_at_helm_console(active.global_position):
+		if hud != null:
+			hud.push_status("⚠️ 請先進入列車鍋爐室並靠近駕駛操縱台，再按 [F] 開啟列車操作介面")
+		return false
+	if stratagem_ui != null and stratagem_ui.is_active:
+		stratagem_ui.cancel()
+	if build_menu_ui != null and build_menu_ui.is_open():
+		build_menu_ui.set_open(false)
+	if context_menu_ui != null:
+		context_menu_ui.close()
+	train_helm_ui.set_open(true)
+	_sync_hud_state()
+	if hud != null:
+		hud.push_status("🎛 已接管鍋爐室駕駛操縱台（A/D 行駛 · S/SPACE 煞停 · F/ESC 離開）")
+	return true
+
+
+func _on_train_helm_closed() -> void:
+	if hud != null:
+		hud.push_status("🎛 已離開鍋爐室操縱台")
+	_sync_hud_state()
+
+
+func _on_train_drive_requested(direction: int) -> void:
+	if armored_train == null:
+		return
+	var d: int = clampi(direction, -1, 1)
+	if d != 0 and day_night_manager != null and not day_night_manager.is_train_mobile():
+		armored_train.set_rail_throttle(0)
+		if hud != null:
+			hud.push_status("⛔ 夜間／黃昏鍋爐鎖定：裝甲列車僅能於白天沿鐵軌移動")
+		_sync_hud_state()
+		return
+	armored_train.set_rail_throttle(d)
+	if hud != null:
+		if d < 0:
+			hud.push_status("🚂 列車蒸氣推進：向西行駛中（S / SPACE 煞停）")
+		elif d > 0:
+			hud.push_status("🚂 列車蒸氣推進：向東行駛中（S / SPACE 煞停）")
+		else:
+			hud.push_status("🛑 列車氣壓煞車已鎖定")
+	_sync_hud_state()
+
+
+func _on_flashlight_toggle_requested() -> void:
+	var active: SquadCharacter = get_active_character()
+	if active == null:
+		return
+	var on: bool = active.toggle_flashlight()
+	if hud != null:
+		hud.push_status("🔦 戰術手電筒已開啟" if on else "🔦 戰術手電筒已關閉")
+	_sync_hud_state()
+
+
+func _on_day_night_phase_changed(new_phase: int, day_num: int) -> void:
+	var active: SquadCharacter = get_active_character()
+	if day_night_manager != null:
+		day_night_manager.apply_environment_lighting(_world_env, _sun_light, _fill_light)
+		var night_lights: bool = day_night_manager.is_night_lights_active()
+		if active != null:
+			active.set_night_flashlight(night_lights)
+		if armored_train != null:
+			armored_train.set_night_lighting(night_lights)
+			if not day_night_manager.is_train_mobile():
+				armored_train.set_rail_throttle(0)
+		if horde_manager != null:
+			horde_manager.set_day_night_state(new_phase, day_num)
+	if hud != null:
+		match new_phase:
+			DayNightCycleManager.Phase.DAY:
+				hud.push_status("☀️ 第 %d 天黎明：鐵軌行駛解鎖，可駕駛列車重新選點或搜刮街區" % day_num)
+			DayNightCycleManager.Phase.DUSK:
+				if day_night_manager != null and day_night_manager.is_blood_moon_warning():
+					hud.push_status("🚨 黃昏血月預警：血月計量已滿，今夜即將降臨血月總攻！")
+				else:
+					hud.push_status("🌇 黃昏警報：鍋爐即將鎖定，請準備夜間陣地防禦與照明！")
+			DayNightCycleManager.Phase.NIGHT:
+				hud.push_status("🌙 黑夜降臨：列車轉入駐防模式，多向屍潮已鎖定列車座標！")
+			DayNightCycleManager.Phase.BLOOD_MOON:
+				hud.push_status("🩸 血月降臨：極度危險！強化屍潮與血月獵殺者鎖定列車位置發動總攻！")
+	_sync_hud_state()
+
+
+func _on_day_night_day_changed(day_num: int) -> void:
+	if expedition_manager != null:
+		expedition_manager.on_day_passed(day_num)
+
+
+func _on_facility_power_changed(powered: bool, _level_days: int) -> void:
+	if hud != null:
+		if powered:
+			hud.push_status("⚡ 列車供電電纜接通大型精煉站！維持停靠過夜可獲得跨日階梯高階產出")
+		else:
+			hud.push_status("🔌 列車已駛離大型精煉站供電半徑，設施暫時斷電")
+
+
+func _on_facility_yield_granted(day_num: int, resources: Dictionary, mod_cores: int) -> void:
+	if loot_stash_manager != null:
+		for k: String in LootStashManager.RESOURCE_ORDER:
+			var amt: int = int(resources.get(k, 0))
+			if amt > 0:
+				loot_stash_manager.train_stash[k] = int(loot_stash_manager.train_stash.get(k, 0)) + amt
+	if meta_progression != null and mod_cores > 0:
+		meta_progression.grant_modification_cores(mod_cores)
+	if day_night_manager != null:
+		day_night_manager.add_blood_moon_pressure(6.0, "facility_run")
+	if hud != null:
+		var txt: String = loot_stash_manager.format_resource_dict(resources) if loot_stash_manager != null else ""
+		var core_tag: String = " ＋ 改造核心 x%d" % mod_cores if mod_cores > 0 else ""
+		hud.push_status("🏭 第 %d 日精煉站供電產出入庫：%s%s" % [day_num, txt, core_tag])
+	_sync_hud_state()
+
+
+func _on_blockade_cleared(_pos: Vector3) -> void:
+	_sync_hud_state()
+
+
+func depart_to_next_sector() -> Dictionary:
+	if expedition_manager == null or day_night_manager == null or loot_stash_manager == null or armored_train == null:
+		return {"ok": false, "reason": "missing_system"}
+	var chk: Dictionary = expedition_manager.check_departure_requirements(
+		day_night_manager.is_train_mobile(),
+		loot_stash_manager.backpack,
+		loot_stash_manager.train_stash,
+		cheat_infinite_resources
+	)
+	if not bool(chk.get("ok", false)):
+		if hud != null:
+			hud.push_status(str(chk.get("message", "尚未滿足離站條件")))
+		return chk
+
+	var saved_hull: float = armored_train.hull_hp
+	expedition_manager.consume_departure_fuel(loot_stash_manager.backpack, loot_stash_manager.train_stash, cheat_infinite_resources)
+	expedition_manager.sector_index += 1
+	var next_seed: int = int(abs((current_seed * 1103515245 + 12345 + expedition_manager.sector_index * 97) % 899999)) + 100000
+	if next_seed == current_seed:
+		next_seed += 31
+
+	generate_new_sector(next_seed, false, current_tier)
+	if armored_train != null:
+		armored_train.hull_hp = clampf(saved_hull, 1.0, armored_train.max_hull_hp)
+		armored_train._update_hull_bar_visual()
+	_sync_hud_state()
+	if hud != null:
+		hud.push_status("🚂 遠征發車！抵達 Sector #%d（保留列車與車內物資，舊區地面工事已清空）" % expedition_manager.sector_index)
+	return {"ok": true, "sector_index": expedition_manager.sector_index, "seed": next_seed}
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1515,16 +1939,20 @@ func _physics_process(delta: float) -> void:
 		var now_inside: bool = armored_train.is_point_near_or_inside_train(active.global_position)
 		armored_train.set_interior_cutaway(now_inside)
 		if now_inside and not was_inside_cutaway and hud != null:
-			hud.push_status("🚂 已進入裝甲列車內部 — 屋頂自動剖面開啟，可巡視各車廂與值勤火柴人乘員")
+			hud.push_status("SYS // 進入裝甲列車內部 — 屋頂剖面自動開啟")
+
+	if sector_generator != null:
+		sector_generator.update_house_cutaways(active.global_position)
 
 	var stratagem_active: bool = (stratagem_ui != null and stratagem_ui.is_active)
+	var helm_active: bool = (train_helm_ui != null and train_helm_ui.is_open())
 	var context_open: bool = (context_menu_ui != null and context_menu_ui.is_open())
 	var build_placing: bool = (build_manager != null and build_manager.is_placing)
 	var ui_blocking: bool = _is_modal_open() or not run_active
 	camera_rig.input_suppressed = stratagem_active or _is_modal_open() or context_open
 
 	var move_in: Vector3 = Vector3.ZERO
-	if not ui_blocking and not stratagem_active and not context_open:
+	if not ui_blocking and not stratagem_active and not helm_active and not context_open:
 		if Input.is_action_pressed("move_forward") or Input.is_physical_key_pressed(KEY_W):
 			move_in += cam_fwd
 		if Input.is_action_pressed("move_back") or Input.is_physical_key_pressed(KEY_S):
@@ -1536,9 +1964,9 @@ func _physics_process(delta: float) -> void:
 		if move_in.length_squared() > 0.02:
 			_pending_context_action = {}
 
-	var mouse_over_ui: bool = ui_blocking or context_open or build_placing or (hud != null and hud.is_mouse_over_controls()) or (build_menu_ui != null and build_menu_ui.is_mouse_over()) or (dev_cheat_ui != null and dev_cheat_ui.is_mouse_over())
-	var want_shoot: bool = (not mouse_over_ui) and (not stratagem_active) and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-	var want_roll: bool = (not ui_blocking) and (not stratagem_active) and (not context_open) and (Input.is_action_just_pressed("dodge") or Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_SHIFT))
+	var mouse_over_ui: bool = ui_blocking or context_open or build_placing or (hud != null and hud.is_mouse_over_controls()) or (build_menu_ui != null and build_menu_ui.is_mouse_over()) or (dev_cheat_ui != null and dev_cheat_ui.is_mouse_over()) or (train_helm_ui != null and train_helm_ui.is_mouse_over())
+	var want_shoot: bool = (not mouse_over_ui) and (not stratagem_active) and (not helm_active) and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var want_roll: bool = (not ui_blocking) and (not stratagem_active) and (not helm_active) and (not context_open) and (Input.is_action_just_pressed("dodge") or Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_SHIFT))
 
 	_active_interact_target = _find_nearest_interaction(active.global_position)
 	_update_interaction_hud(active.global_position, _active_interact_target)
@@ -1563,13 +1991,31 @@ func _physics_process(delta: float) -> void:
 
 	if run_active and not _is_modal_open():
 		var stats: Dictionary = train_consist.compute_stats()
+		if day_night_manager != null:
+			day_night_manager.update_cycle(delta)
+			day_night_manager.apply_environment_lighting(_world_env, _sun_light, _fill_light)
+			var night_lights: bool = day_night_manager.is_night_lights_active()
+			if active != null:
+				active.set_night_flashlight(night_lights)
+			if horde_manager != null:
+				horde_manager.set_day_night_state(day_night_manager.current_phase, day_night_manager.current_day)
+			if armored_train != null:
+				if expedition_manager != null:
+					expedition_manager.update_train_coupling(armored_train)
+				armored_train.set_night_lighting(night_lights)
+				if day_night_manager.is_train_mobile() and sector_generator != null:
+					var dx: float = armored_train.drive_along_rail(delta, sector_generator.world_bounds.position.x, sector_generator.world_bounds.end.x)
+					if absf(dx) > 0.0001 and active != null and armored_train.is_point_inside_train(active.global_position):
+						active.global_position.x += dx
+				elif armored_train.rail_throttle != 0:
+					armored_train.set_rail_throttle(0)
 		if horde_manager != null:
 			horde_manager.update_horde(delta, active.global_position, not active.is_dead, armored_train, stats, cam_yaw)
 		if build_manager != null and horde_manager != null:
 			build_manager.update_defenses(delta, horde_manager)
 
 		var heal_rate: float = float(stats.get("heal_rate", 0.0))
-		if heal_rate > 0.0 and armored_train != null and active.global_position.z <= armored_train.position.z + 8.5:
+		if heal_rate > 0.0 and armored_train != null and absf(active.global_position.z - armored_train.position.z) <= 8.5:
 			active.heal(heal_rate * delta)
 		var repair_rate: float = float(stats.get("repair_rate", 0.0))
 		if repair_rate > 0.0 and armored_train != null and armored_train.hull_hp < armored_train.max_hull_hp:
@@ -1585,6 +2031,42 @@ func _physics_process(delta: float) -> void:
 			if hud != null:
 				hud.update_survival_vitals(active.hp, active.max_hp, active.stamina, active.max_stamina, active.hunger, active.max_hunger)
 				hud.update_run_timer(horde_manager.time_remaining, horde_manager.current_stage_name, horde_manager.total_kills, horde_manager.get_active_zombie_count())
+				if day_night_manager != null and armored_train != null:
+					hud.update_day_night_and_train(
+						day_night_manager.current_phase,
+						day_night_manager.current_day,
+						day_night_manager.get_phase_remaining(),
+						day_night_manager.get_phase_progress(),
+						day_night_manager.is_train_mobile(),
+						active.is_flashlight_on(),
+						day_night_manager.blood_moon_value,
+						day_night_manager.is_blood_moon_warning()
+					)
+					if dev_cheat_ui != null and dev_cheat_ui.is_open():
+						dev_cheat_ui.sync_day_night(
+							day_night_manager.current_phase,
+							day_night_manager.current_day,
+							day_night_manager.blood_moon_value,
+							day_night_manager.is_blood_moon_warning()
+						)
+					if train_helm_ui != null and train_helm_ui.is_open():
+						var dchk2: Dictionary = expedition_manager.check_departure_requirements(
+							day_night_manager.is_train_mobile(),
+							loot_stash_manager.backpack if loot_stash_manager != null else {},
+							loot_stash_manager.train_stash if loot_stash_manager != null else {},
+							cheat_infinite_resources
+						) if expedition_manager != null else {}
+						train_helm_ui.refresh(
+							day_night_manager.current_phase,
+							day_night_manager.get_clock_text(),
+							day_night_manager.is_train_mobile(),
+							armored_train.rail_throttle,
+							armored_train.position.x,
+							armored_train.hull_hp,
+							armored_train.max_hull_hp,
+							expedition_manager.sector_index if expedition_manager != null else 1,
+							dchk2
+						)
 				if mission_director != null and armored_train != null:
 					hud.update_mission_status(mission_director.get_mission_hud_text(), mission_director.get_compass_hint(active.global_position, armored_train.get_boarding_world_pos()))
 			_refresh_minimap()
@@ -1602,6 +2084,13 @@ func _find_nearest_interaction(pos: Vector3) -> Dictionary:
 			best = m_inter
 
 	if armored_train != null:
+		if armored_train.is_player_at_helm_console(pos):
+			var h_zone: Dictionary = armored_train.get_helm_zone()
+			var hpos: Vector3 = h_zone.get("pos", Vector3.ZERO) as Vector3
+			var hd: float = Vector2(pos.x - hpos.x, pos.z - hpos.z).length()
+			if hd < best_dist:
+				best_dist = hd
+				best = h_zone
 		for zone in armored_train.get_interactive_zones():
 			var zpos: Vector3 = zone.get("pos", Vector3.ZERO) as Vector3
 			var radius: float = float(zone.get("radius", 2.6))
@@ -1609,6 +2098,15 @@ func _find_nearest_interaction(pos: Vector3) -> Dictionary:
 			if d <= radius and d < best_dist:
 				best_dist = d
 				best = zone
+
+	if expedition_manager != null:
+		for ezone: Dictionary in expedition_manager.get_interactive_zones():
+			var epos: Vector3 = ezone.get("pos", Vector3.ZERO) as Vector3
+			var eradius: float = float(ezone.get("radius", 3.4))
+			var ed: float = Vector2(pos.x - epos.x, pos.z - epos.z).length()
+			if ed <= eradius and ed < best_dist:
+				best_dist = ed
+				best = ezone
 
 	if loot_stash_manager != null:
 		var loot_entry: Dictionary = loot_stash_manager.find_nearest_unlooted(pos, 3.2)
@@ -1624,6 +2122,17 @@ func _find_nearest_interaction(pos: Vector3) -> Dictionary:
 					"pos": lpos,
 				}
 
+	if sector_generator != null and best.is_empty():
+		var win_entry: Dictionary = sector_generator.find_nearest_house_window(pos, 2.4, true)
+		if not win_entry.is_empty():
+			best = {
+				"id": str(win_entry.get("id", "")),
+				"kind": "house_window",
+				"label": "封固民宅窗戶（封窗木板）",
+				"pos": win_entry.get("pos", Vector3.ZERO) as Vector3,
+				"window": win_entry,
+			}
+
 	return best
 
 
@@ -1633,7 +2142,7 @@ func _update_interaction_hud(player_pos: Vector3, target: Dictionary) -> void:
 	var in_boarding: bool = armored_train != null and armored_train.is_player_in_boarding_zone(player_pos)
 	hud.set_boarding_zone_active(in_boarding)
 
-	if (stratagem_ui != null and stratagem_ui.is_active) or (build_menu_ui != null and build_menu_ui.is_open()):
+	if (stratagem_ui != null and stratagem_ui.is_active) or (train_helm_ui != null and train_helm_ui.is_open()) or (build_menu_ui != null and build_menu_ui.is_open()):
 		hud.set_interact_prompt_text("")
 		return
 
@@ -1643,7 +2152,22 @@ func _update_interaction_hud(player_pos: Vector3, target: Dictionary) -> void:
 
 	var kind: String = str(target.get("kind", ""))
 	var label: String = str(target.get("label", ""))
-	if kind == "mission_objective":
+	if kind == "train_helm":
+		var can_drive: bool = day_night_manager == null or day_night_manager.is_train_mobile()
+		if can_drive:
+			hud.set_interact_prompt_text("[F / E] 進入鍋爐室駕駛操縱台（白天可行駛）", Color(1.0, 0.80, 0.28))
+		else:
+			hud.set_interact_prompt_text("[F / E] 檢視鍋爐室操縱台（夜間鎖定中）", Color(1.0, 0.45, 0.42))
+	elif kind == "holdout_facility" and expedition_manager != null:
+		if expedition_manager.facility_powered:
+			hud.set_interact_prompt_text("[E / F] 精煉站供電中（連續 %d 日 · 黎明自動產出）" % expedition_manager.consecutive_powered_days, Color(0.28, 0.90, 1.0))
+		else:
+			hud.set_interact_prompt_text("[E / F] 精煉站未接電（需將列車停靠在 %.0fm 內）" % ExpeditionManager.FACILITY_POWER_RANGE, Color(1.0, 0.72, 0.28))
+	elif kind == "rail_blockade":
+		hud.set_interact_prompt_text("[E / 右鍵選單] 4 鍵清除東側鐵軌路障（離站必清）", Color(1.0, 0.48, 0.28))
+	elif kind == "house_window":
+		hud.set_interact_prompt_text("[E / 右鍵選單] 🪵 架設封窗木板（需金屬 1）", Color(0.86, 0.72, 0.44))
+	elif kind == "mission_objective":
 		hud.set_interact_prompt_text("[E / 右鍵選單] 6 鍵指令：%s" % label, Color(0.98, 0.56, 1.0))
 	elif kind == "survivor_rescue":
 		hud.set_interact_prompt_text("[E / 右鍵選單] 5 鍵救援：%s" % label, Color(0.42, 1.0, 0.68))

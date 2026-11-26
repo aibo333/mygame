@@ -18,7 +18,10 @@ var max_hull_hp: float = 1000.0
 var hull_hp: float = 1000.0
 var boarding_local_pos: Vector3 = Vector3(0.0, 0.0, 4.6)
 var stash_local_pos: Vector3 = Vector3(10.6, 0.0, 4.6)
+var helm_local_pos: Vector3 = Vector3(-13.8, 0.0, -0.75)
 var carriage_count: int = 3
+var rail_throttle: int = 0  # -1 = West (-X), 0 = Stop, +1 = East (+X)
+var drive_speed: float = 5.5
 
 var _built: bool = false
 var _tracks_root: Node3D = null
@@ -30,8 +33,15 @@ var _boarding_ring: MeshInstance3D = null
 var _stash_ring: MeshInstance3D = null
 var _boarding_label: Label3D = null
 var _stash_label: Label3D = null
+var _helm_ring: MeshInstance3D = null
+var _helm_label: Label3D = null
 var _furnace_light: OmniLight3D = null
 var _headlamp_light: OmniLight3D = null
+var _headlamp_spot: SpotLight3D = null
+var _base_headlamp_energy: float = 3.4
+var _base_headlamp_range: float = 18.0
+var _night_lighting_enabled: bool = false
+var _is_driving: bool = false
 var _turret_heads: Array[Node3D] = []
 var _radar_dishes: Array[Node3D] = []
 var _electric_lights: Array[OmniLight3D] = []
@@ -77,7 +87,7 @@ func apply_consist(consist: TrainConsistManager) -> void:
 	_consist_min_x = start_x - 1.2
 	_consist_max_x = start_x + total_span + CAR_LEN * 0.5
 
-	_rebuild_railway_tracks(maxf(88.0, total_span + 30.0))
+	_rebuild_railway_tracks(maxf(140.0, total_span + 60.0))
 
 	_consist_root = Node3D.new()
 	_consist_root.name = "ConsistRoot"
@@ -85,6 +95,7 @@ func apply_consist(consist: TrainConsistManager) -> void:
 
 	# 1. Enlarged Enterable Locomotive at index 0 (west nose + walkable cab)
 	var loco_x: float = start_x
+	helm_local_pos = Vector3(loco_x + 2.1, 0.0, -0.75)
 	_build_locomotive_car(loco_x, consist.locomotive, stats, consist)
 
 	# 2. Enlarged Enterable Dynamic Carriages
@@ -124,6 +135,9 @@ func _clear_consist_nodes() -> void:
 	_working_npcs.clear()
 	_furnace_light = null
 	_headlamp_light = null
+	_headlamp_spot = null
+	_helm_ring = null
+	_helm_label = null
 
 	if _consist_root != null and is_instance_valid(_consist_root):
 		if _consist_root.get_parent() == self:
@@ -229,6 +243,36 @@ func get_stash_world_pos() -> Vector3:
 	return position + stash_local_pos
 
 
+func get_helm_world_pos() -> Vector3:
+	if is_inside_tree():
+		return to_global(helm_local_pos)
+	return position + helm_local_pos
+
+
+func is_player_at_helm_console(world_pos: Vector3) -> bool:
+	if not is_point_inside_train(world_pos):
+		return false
+	var target: Vector3 = get_helm_world_pos()
+	return Vector2(world_pos.x - target.x, world_pos.z - target.z).length() <= 2.6
+
+
+func get_helm_zone() -> Dictionary:
+	return {
+		"id": "train_helm",
+		"kind": "train_helm",
+		"label": "鍋爐室駕駛操縱台",
+		"pos": get_helm_world_pos(),
+		"radius": 2.6,
+	}
+
+
+func get_nearest_perimeter_world_pos(from_pos: Vector3) -> Vector3:
+	var origin: Vector3 = global_position if is_inside_tree() else position
+	var clamped_x: float = clampf(from_pos.x, origin.x + _consist_min_x, origin.x + _consist_max_x)
+	var side_z: float = -3.05 if from_pos.z < origin.z else 3.05
+	return Vector3(clamped_x, 0.0, origin.z + side_z)
+
+
 func get_boarding_radius() -> float:
 	return BOARDING_RADIUS
 
@@ -299,6 +343,8 @@ func set_camera_yaw(yaw_rad: float) -> void:
 		_boarding_label.rotation = Vector3(deg_to_rad(-24.0), _camera_yaw_rad, 0.0)
 	if _stash_label != null and is_instance_valid(_stash_label):
 		_stash_label.rotation = Vector3(deg_to_rad(-24.0), _camera_yaw_rad, 0.0)
+	if _helm_label != null and is_instance_valid(_helm_label):
+		_helm_label.rotation = Vector3(deg_to_rad(-24.0), _camera_yaw_rad, 0.0)
 	for npc: Dictionary in _working_npcs:
 		var lbl: Label3D = npc.get("label", null) as Label3D
 		if lbl != null and is_instance_valid(lbl):
@@ -555,6 +601,27 @@ func _build_locomotive_car(cx: float, loco_cfg: Dictionary, stats: Dictionary, c
 	_add_box(loco, "CoalBunker", Vector3(1.2, 0.85, 1.1), Vector3(3.6, 0.42, -1.95), armor_dark)
 	_add_light(loco, "CabInteriorWarmLight", Color(1.0, 0.72, 0.36), 3.4, 9.5, Vector3(2.2, 3.4, 0.0))
 
+	_helm_ring = MeshInstance3D.new()
+	_helm_ring.name = "HelmConsoleRing"
+	var h_torus := TorusMesh.new()
+	h_torus.inner_radius = 0.65
+	h_torus.outer_radius = 0.82
+	_helm_ring.mesh = h_torus
+	_helm_ring.scale = Vector3(1.0, 0.35, 1.0)
+	_helm_ring.position = Vector3(2.1, 0.14, -0.75)
+	_helm_ring.material_override = _make_mat(Color(1.0, 0.72, 0.22), 0.1, 0.4, Color(1.0, 0.68, 0.18), 1.8)
+	loco.add_child(_helm_ring)
+
+	_helm_label = Label3D.new()
+	_helm_label.name = "HelmConsoleLabel"
+	_helm_label.text = "[F] 操縱台"
+	_helm_label.font_size = 24
+	_helm_label.pixel_size = 0.011
+	_helm_label.modulate = Color(1.0, 0.86, 0.42)
+	_helm_label.outline_size = 6
+	_helm_label.position = Vector3(2.1, 1.85, -1.65)
+	loco.add_child(_helm_label)
+
 	# Cutaway Roof & South Upper Trim
 	var cab_cutaway: Node3D = Node3D.new()
 	cab_cutaway.name = "CabRoofCutaway"
@@ -584,13 +651,91 @@ func _build_locomotive_car(cx: float, loco_cfg: Dictionary, stats: Dictionary, c
 	_furnace_light.position = Vector3(-1.4, 2.2, 3.0)
 	loco.add_child(_furnace_light)
 
+	_base_headlamp_energy = float(stats.get("headlamp_energy", 3.4))
+	_base_headlamp_range = float(stats.get("headlamp_range", 18.0))
 	_headlamp_light = OmniLight3D.new()
 	_headlamp_light.name = "LocomotiveHeadlamp"
 	_headlamp_light.light_color = Color(1.0, 0.93, 0.74)
-	_headlamp_light.light_energy = float(stats.get("headlamp_energy", 3.4))
-	_headlamp_light.omni_range = float(stats.get("headlamp_range", 18.0))
+	_headlamp_light.light_energy = _base_headlamp_energy
+	_headlamp_light.omni_range = _base_headlamp_range
 	_headlamp_light.position = Vector3(-7.0, 3.0, 0.4)
 	loco.add_child(_headlamp_light)
+
+	_headlamp_spot = SpotLight3D.new()
+	_headlamp_spot.name = "LocomotiveSearchlight"
+	_headlamp_spot.light_color = Color(1.0, 0.94, 0.78)
+	_headlamp_spot.light_energy = 7.5
+	_headlamp_spot.spot_range = maxf(26.0, _base_headlamp_range * 1.65)
+	_headlamp_spot.spot_angle = 34.0
+	_headlamp_spot.spot_attenuation = 0.95
+	_headlamp_spot.spot_angle_attenuation = 0.80
+	_headlamp_spot.shadow_enabled = false
+	_headlamp_spot.position = Vector3(-5.2, 3.55, 0.0)
+	_headlamp_spot.basis = Basis.looking_at(Vector3(-1.0, -0.18, 0.0), Vector3.UP)
+	_headlamp_spot.visible = _night_lighting_enabled
+	loco.add_child(_headlamp_spot)
+
+	_apply_night_lighting_state()
+
+
+func set_night_lighting(enabled: bool) -> void:
+	if _night_lighting_enabled == enabled:
+		return
+	_night_lighting_enabled = enabled
+	_apply_night_lighting_state()
+
+
+func is_night_lighting_enabled() -> bool:
+	return _night_lighting_enabled
+
+
+func _apply_night_lighting_state() -> void:
+	if _headlamp_spot != null and is_instance_valid(_headlamp_spot):
+		_headlamp_spot.visible = _night_lighting_enabled
+	if _headlamp_light != null and is_instance_valid(_headlamp_light):
+		_headlamp_light.light_energy = _base_headlamp_energy * (1.45 if _night_lighting_enabled else 0.72)
+		_headlamp_light.omni_range = _base_headlamp_range * (1.25 if _night_lighting_enabled else 0.90)
+	for elight in _electric_lights:
+		if elight != null and is_instance_valid(elight):
+			elight.light_energy = 2.65 if _night_lighting_enabled else 1.25
+
+
+func set_rail_throttle(throttle: int) -> void:
+	rail_throttle = clampi(throttle, -1, 1)
+
+
+func sync_tracks_world_anchor() -> void:
+	if _tracks_root != null and is_instance_valid(_tracks_root):
+		_tracks_root.position.x = -position.x
+
+
+func set_rail_x(new_x: float) -> void:
+	position.x = new_x
+	sync_tracks_world_anchor()
+
+
+func drive_along_rail(delta: float, min_world_x: float, max_world_x: float, throttle_override: int = 999) -> float:
+	var active_throttle: int = rail_throttle if throttle_override == 999 else clampi(throttle_override, -1, 1)
+	if active_throttle == 0 or delta <= 0.0:
+		_is_driving = false
+		return 0.0
+	var half_len: float = get_train_half_length()
+	var margin: float = 2.0
+	var lo: float = min_world_x + half_len + margin
+	var hi: float = max_world_x - half_len - margin
+	if lo > hi:
+		var mid: float = (min_world_x + max_world_x) * 0.5
+		lo = mid
+		hi = mid
+	var prev_x: float = position.x
+	var next_x: float = clampf(prev_x + float(active_throttle) * drive_speed * delta, lo, hi)
+	position.x = next_x
+	sync_tracks_world_anchor()
+	var moved: float = next_x - prev_x
+	_is_driving = absf(moved) > 0.0001
+	if not _is_driving:
+		rail_throttle = 0
+	return moved
 
 
 func _build_carriage_unit(idx: int, cx: float, car_data: Dictionary, ctype: String, roof_mod: String, is_last: bool, consist: TrainConsistManager) -> void:

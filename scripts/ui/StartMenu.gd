@@ -9,9 +9,31 @@ var sandbox_button: Button = null
 var quit_button: Button = null
 
 
+class TacticalBackdropCanvas:
+	extends Control
+
+	func _draw() -> void:
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.035, 0.045, 0.062, 1.0), true)
+		var step: float = 48.0
+		var grid_col := Color(0.18, 0.26, 0.34, 0.18)
+		var cross_col := Color(0.28, 0.84, 0.96, 0.24)
+		for gx in range(0, int(size.x) + 1, int(step)):
+			draw_line(Vector2(float(gx), 0.0), Vector2(float(gx), size.y), grid_col, 1.0)
+		for gy in range(0, int(size.y) + 1, int(step)):
+			draw_line(Vector2(0.0, float(gy)), Vector2(size.x, float(gy)), grid_col, 1.0)
+		for gx in range(int(step) * 2, int(size.x), int(step) * 4):
+			for gy in range(int(step) * 2, int(size.y), int(step) * 4):
+				draw_line(Vector2(float(gx) - 4.0, float(gy)), Vector2(float(gx) + 4.0, float(gy)), cross_col, 1.0)
+				draw_line(Vector2(float(gx), float(gy) - 4.0), Vector2(float(gx), float(gy) + 4.0), cross_col, 1.0)
+		# Top & bottom telemetry hairlines
+		draw_line(Vector2(24.0, 42.0), Vector2(size.x - 24.0, 42.0), Color(0.28, 0.84, 0.96, 0.32), 1.0)
+		draw_line(Vector2(24.0, size.y - 42.0), Vector2(size.x - 24.0, size.y - 42.0), Color(0.95, 0.63, 0.14, 0.26), 1.0)
+
+
 func _ready() -> void:
 	Engine.time_scale = 1.0
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	theme = TacticalTheme.build_theme(15)
 	_build_ui()
 
 
@@ -37,108 +59,111 @@ func launch_anim_sandbox() -> void:
 
 
 func _build_ui() -> void:
-	var bg := ColorRect.new()
+	var bg := TacticalBackdropCanvas.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0.06, 0.08, 0.11, 1.0)
 	add_child(bg)
 
-	# Subtle top accent bar
-	var top_bar := ColorRect.new()
-	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	top_bar.custom_minimum_size = Vector2(0.0, 5.0)
-	top_bar.color = Color(0.28, 0.84, 0.98, 0.95)
-	add_child(top_bar)
+	# Top status telemetry strip
+	var top_strip := HBoxContainer.new()
+	top_strip.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	top_strip.offset_left = 28.0
+	top_strip.offset_top = 12.0
+	top_strip.offset_right = -28.0
+	add_child(top_strip)
+
+	var sys_lbl := Label.new()
+	sys_lbl.text = "RAIL-CMD // TACTICAL DEPLOYMENT TERMINAL v2.0"
+	sys_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sys_lbl.add_theme_font_size_override("font_size", 12)
+	sys_lbl.add_theme_color_override("font_color", TacticalTheme.ACCENT_CYAN)
+	top_strip.add_child(sys_lbl)
+
+	var ver_lbl := Label.new()
+	ver_lbl.text = "STATUS: STANDBY  |  SYS_OK"
+	ver_lbl.add_theme_font_size_override("font_size", 12)
+	ver_lbl.add_theme_color_override("font_color", TacticalTheme.TEXT_SECONDARY)
+	top_strip.add_child(ver_lbl)
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(640.0, 440.0)
-	var card_style := StyleBoxFlat.new()
-	card_style.bg_color = Color(0.10, 0.13, 0.18, 0.96)
-	card_style.border_color = Color(0.28, 0.82, 0.98, 0.55)
-	card_style.set_border_width_all(2)
-	card_style.set_corner_radius_all(12)
-	card_style.set_content_margin_all(32)
-	card.add_theme_stylebox_override("panel", card_style)
+	card.custom_minimum_size = Vector2(680.0, 440.0)
+	card.add_theme_stylebox_override("panel", TacticalTheme.make_accent_card_style(TacticalTheme.BG_PANEL_DEEP, TacticalTheme.ACCENT_AMBER, 4, 32, 28))
 	center.add_child(card)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 18)
 	card.add_child(vbox)
 
+	var tag_lbl := Label.new()
+	tag_lbl.text = "// OPERATION: IRON RAIL EXTRACTION"
+	tag_lbl.add_theme_font_size_override("font_size", 12)
+	tag_lbl.add_theme_color_override("font_color", TacticalTheme.ACCENT_AMBER)
+	vbox.add_child(tag_lbl)
+
 	var title := Label.new()
 	title.text = "甲鐵廢墟戰線"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 40)
-	title.add_theme_color_override("font_color", Color(0.92, 0.97, 1.0))
+	title.add_theme_font_size_override("font_size", 38)
+	title.add_theme_color_override("font_color", TacticalTheme.TEXT_PRIMARY)
 	vbox.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "ARMORED TRAIN EXTRACTION  •  請選擇啟動模式"
-	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	subtitle.add_theme_font_size_override("font_size", 15)
-	subtitle.add_theme_color_override("font_color", Color(0.54, 0.76, 0.88))
+	subtitle.text = "ARMORED TRAIN DEFENSE & EXTRACTION PROTOCOL  //  選擇部署模式"
+	subtitle.add_theme_font_size_override("font_size", 13)
+	subtitle.add_theme_color_override("font_color", TacticalTheme.TEXT_SECONDARY)
 	vbox.add_child(subtitle)
 
-	var sep := HSeparator.new()
-	vbox.add_child(sep)
+	vbox.add_child(HSeparator.new())
 
 	demo_button = _make_mode_button(
-		"▶  [1] 進入 DEMO 模式",
-		"完整廢墟撤離戰場、裝甲列車基地、三武器實戰（M4A1-S / AK-47 / DE）",
-		Color(0.16, 0.42, 0.56),
-		Color(0.22, 0.56, 0.74)
+		"[01] 實戰部署 // DEPLOY DEMO SECTOR",
+		"隨機都市廢墟戰場・裝甲列車移動基地・三武器戰術切換（M4A1-S / AK-47 / DE）",
+		TacticalTheme.ACCENT_AMBER
 	)
 	demo_button.pressed.connect(launch_demo_mode)
 	vbox.add_child(demo_button)
 
 	sandbox_button = _make_mode_button(
-		"🎬  [2] 進入動作調教沙盒",
-		"Debug Panel + 時間軸倍速播放 + 動作斷點截斷 + 走→滾→走連貫測試",
-		Color(0.24, 0.30, 0.46),
-		Color(0.34, 0.44, 0.68)
+		"[02] 動作調校沙盒 // ANIMATION SANDBOX",
+		"時間軸倍速精調・動作斷點截斷・走→滾→走連貫融合測試・模型即時切換",
+		TacticalTheme.ACCENT_CYAN
 	)
 	sandbox_button.pressed.connect(launch_anim_sandbox)
 	vbox.add_child(sandbox_button)
 
+	vbox.add_child(HSeparator.new())
+
 	var footer := HBoxContainer.new()
-	footer.alignment = BoxContainer.ALIGNMENT_CENTER
 	footer.add_theme_constant_override("separation", 16)
 	vbox.add_child(footer)
 
 	var hint := Label.new()
-	hint.text = "快捷鍵：[1 / Enter] DEMO 模式   [2] 動作調教沙盒   [Esc] 離開"
-	hint.add_theme_font_size_override("font_size", 13)
-	hint.add_theme_color_override("font_color", Color(0.62, 0.68, 0.76))
+	hint.text = "KEYBIND: [1 / ENTER] DEPLOY   [2] SANDBOX   [ESC] EXIT"
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_color_override("font_color", TacticalTheme.TEXT_MUTED)
 	footer.add_child(hint)
 
 	quit_button = Button.new()
-	quit_button.text = "離開"
-	quit_button.custom_minimum_size = Vector2(88.0, 34.0)
+	quit_button.text = "[ESC] 退出系統"
+	quit_button.custom_minimum_size = Vector2(128.0, 34.0)
 	quit_button.pressed.connect(func() -> void: get_tree().quit())
 	footer.add_child(quit_button)
 
 
-func _make_mode_button(headline: String, desc: String, base_col: Color, hover_col: Color) -> Button:
+func _make_mode_button(headline: String, desc: String, accent: Color) -> Button:
 	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(560.0, 86.0)
+	btn.custom_minimum_size = Vector2(616.0, 86.0)
 	btn.text = "%s\n%s" % [headline, desc]
 	btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	btn.add_theme_font_size_override("font_size", 18)
-	btn.add_theme_color_override("font_color", Color(0.95, 0.98, 1.0))
+	btn.add_theme_font_size_override("font_size", 16)
+	btn.add_theme_color_override("font_color", TacticalTheme.TEXT_PRIMARY)
 
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = base_col
-	normal.border_color = Color(0.45, 0.85, 1.0, 0.45)
-	normal.set_border_width_all(1)
-	normal.set_corner_radius_all(8)
-	normal.set_content_margin_all(14)
-
-	var hover := normal.duplicate() as StyleBoxFlat
-	hover.bg_color = hover_col
-	hover.border_color = Color(0.55, 0.92, 1.0, 0.95)
+	var normal := TacticalTheme.make_accent_card_style(TacticalTheme.BG_CARD, accent, 3, 16, 14)
+	normal.border_color = Color(accent.r, accent.g, accent.b, 0.55)
+	var hover := TacticalTheme.make_accent_card_style(TacticalTheme.BG_CARD_HOVER, accent, 4, 16, 14)
 
 	btn.add_theme_stylebox_override("normal", normal)
 	btn.add_theme_stylebox_override("hover", hover)
